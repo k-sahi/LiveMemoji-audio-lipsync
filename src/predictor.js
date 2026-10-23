@@ -38,7 +38,7 @@ export class Predictor {
   static async load(tf, sources = [MODEL_KEY, MODEL_URL]) {
     for (const src of sources) {
       try {
-        const model = await tf.loadLayersModel(src);
+        const model = src.startsWith('indexeddb://') ? await tf.loadLayersModel(src) : await loadModelFile(tf, src);
         const meta = model.getUserDefinedMetadata?.();
         if (meta && meta.targetNames) return { predictor: new Predictor(tf, model, meta), source: src };
       } catch { /* not there, try the next source */ }
@@ -89,4 +89,50 @@ export class Predictor {
     this.liveMean = Float32Array.from(this.meta.mean);
     this.liveFrames = 0;
   }
+}
+
+// ---- single-file model format -------------------------------------------------------
+// TensorFlow.js normally saves a model as TWO files (.json + .weights.bin), and
+// browsers often block the second download. We pack everything (architecture,
+// learned weights as base64, and our metadata) into ONE .json file instead.
+
+/** Pack a trained model into one downloadable JSON Blob. */
+export async function exportModelFile(tf, model) {
+  let artifacts;
+  await model.save(tf.io.withSaveHandler(async (a) => {
+    artifacts = a;
+    return { modelArtifactsInfo: { dateSaved: new Date(), modelTopologyType: 'JSON' } };
+  }));
+  // weightData can be one ArrayBuffer or a list of them, depending on the TF.js version.
+  const parts = Array.isArray(artifacts.weightData) ? artifacts.weightData : [artifacts.weightData];
+  const bytes = new Uint8Array(parts.reduce((n, b) => n + b.byteLength, 0));
+  let offset = 0;
+  for (const b of parts) { bytes.set(new Uint8Array(b), offset); offset += b.byteLength; }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const file = {
+    format: 'lipsync-model-v1',
+    modelTopology: artifacts.modelTopology,
+    weightSpecs: artifacts.weightSpecs,
+    weightDataBase64: btoa(binary),
+    userDefinedMetadata: artifacts.userDefinedMetadata ?? model.getUserDefinedMetadata(),
+  };
+  return new Blob([JSON.stringify(file)], { type: 'application/json' });
+}
+
+/** Load a model from a URL: our single-file format, or TF.js's usual two-file format. */
+export async function loadModelFile(tf, url) {
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  const json = await res.json();
+  if (json.format !== 'lipsync-model-v1') return tf.loadLayersModel(url); // two-file format
+  const binary = atob(json.weightDataBase64);
+  const weightData = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) weightData[i] = binary.charCodeAt(i);
+  return tf.loadLayersModel(tf.io.fromMemory({
+    modelTopology: json.modelTopology,
+    weightSpecs: json.weightSpecs,
+    weightData: weightData.buffer,
+    userDefinedMetadata: json.userDefinedMetadata,
+  }));
 }
