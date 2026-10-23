@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio Lipsync - Step 6: 3D Avatar</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 980px; margin: 2rem auto; padding: 0 1rem; }
+    nav a { color: #8ab4ff; margin-right: 1rem; }
+    button, label.btn { font-size: 1rem; padding: .6rem 1.2rem; border-radius: 8px; border: 0; background: #4f8cff; color: #fff; cursor: pointer; display: inline-block; }
+    button:disabled { opacity: .45; cursor: default; }
+    label.btn.secondary { background: #333; }
+    input[type=file] { display: none; }
+    .layout { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-start; }
+    #scene { width: 520px; max-width: 100%; aspect-ratio: 1; border-radius: 14px; display: block; cursor: grab;
+      background: radial-gradient(circle at 50% 40%, #2a2f3a, #121418); touch-action: none; }
+    .panel { flex: 1; min-width: 280px; }
+    .status { font-family: ui-monospace, monospace; color: #9ab; font-size: .85rem; margin: .5rem 0; }
+    .ctrl { display: grid; grid-template-columns: 9rem 1fr; align-items: center; gap: .5rem; margin: .6rem 0; color: #bbb; font-size: .9rem; }
+    pre#debug { font-family: ui-monospace, monospace; font-size: .75rem; color: #ff8a7a; min-height: 6em; }
+    p.note { color: #888; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <nav><a href="index.html">Step 2: Audio → MFCCs</a><a href="face.html">Step 3: Face tracking</a><a href="record.html">Step 4: Record</a><a href="train.html">Step 5: Train</a><a href="avatar.html">Step 6: Avatar</a></nav>
+  <h1>Step 6: Talk, and your avatar talks back</h1>
+
+  <div class="layout">
+    <canvas id="scene"></canvas>
+    <div class="panel">
+      <button id="micBtn" disabled>🎙 Start mic</button>
+      <button id="waveBtn" disabled style="background:#333">👋 Wave</button>
+      <div class="status" id="modelInfo">loading model…</div>
+      <div class="status" id="micInfo"></div>
+      <div class="status" id="status">loading…</div>
+
+      <div class="ctrl"><span>expressiveness</span><input type="range" id="gain" min="0.8" max="3" step="0.1" value="1.6"></div>
+      <div class="ctrl"><span>smoothing</span><input type="range" id="smooth" min="0" max="0.85" step="0.05" value="0.45"></div>
+      <div class="ctrl"><span>3D depth</span><input type="range" id="depth" min="0.3" max="1.6" step="0.1" value="1"></div>
+      <div class="ctrl"><span>alive</span><label><input type="checkbox" id="alive" checked> blinks, brows, head motion</label></div>
+      <div class="ctrl"><span>wave</span><label><input type="checkbox" id="autoWave" checked> when I start talking</label></div>
+      <div class="ctrl"><span>mic calibration</span><label><input type="checkbox" id="calib"> experimental</label></div>
+      <div class="ctrl"><span>show predictions</span><input type="checkbox" id="showDebug"></div>
+      <pre id="debug"></pre>
+
+      <label class="btn secondary" for="photoInput">🖼 Use a different picture</label>
+      <input type="file" id="photoInput" accept="image/*" />
+      <p class="note">Drag the face to turn it, double-click to reset. Only the face turns; hair and body stay put, because a single front-facing picture has no information about the sides or back of the head.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script type="module" src="src/avatar.js"></script>
+</body>
+</html>
