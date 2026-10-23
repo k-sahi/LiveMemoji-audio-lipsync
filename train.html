@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio Lipsync - Step 5: Train</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 980px; margin: 2rem auto; padding: 0 1rem; }
+    nav a { color: #8ab4ff; margin-right: 1rem; }
+    button, label.btn { font-size: 1rem; padding: .6rem 1.2rem; border-radius: 8px; border: 0; background: #4f8cff; color: #fff; cursor: pointer; display: inline-block; }
+    button:disabled { opacity: .45; cursor: default; }
+    button.secondary { background: #333; }
+    input[type=file] { display: none; }
+    h2 { margin: 2rem 0 .5rem; font-weight: 600; font-size: 1.2rem; }
+    .status { font-family: ui-monospace, monospace; color: #9ab; font-size: .85rem; margin: .5rem 0; }
+    #drop { border: 2px dashed #444; border-radius: 10px; padding: 1.5rem; text-align: center; color: #999; }
+    #drop.over { border-color: #4f8cff; background: #16203a; }
+    ul { line-height: 1.8; padding-left: 1.2rem; font-size: .9rem; }
+    canvas { background: #1c1c1c; border-radius: 8px; display: block; max-width: 100%; }
+    table { border-collapse: collapse; font-size: .85rem; margin-top: .5rem; }
+    td, th { padding: .2rem .8rem .2rem 0; text-align: left; font-weight: normal; color: #bbb; }
+    td:first-child { font-family: ui-monospace, monospace; color: #eee; }
+    .track { display: inline-block; vertical-align: middle; width: 180px; height: 8px; background: #222; border-radius: 4px; overflow: hidden; }
+    .fill { height: 100%; width: 0; background: #3ecf6e; }
+    .row { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center; }
+    #liveBars .bar { display: grid; grid-template-columns: 11rem 1fr; gap: .5rem; align-items: center; font-family: ui-monospace, monospace; font-size: .8rem; margin: 3px 0; }
+    #liveBars .fill { background: #ff6a5a; transition: width 40ms linear; }
+    p.note { color: #888; font-size: .85rem; max-width: 760px; }
+  </style>
+</head>
+<body>
+  <nav><a href="index.html">Step 2: Audio → MFCCs</a><a href="face.html">Step 3: Face tracking</a><a href="record.html">Step 4: Record</a><a href="train.html">Step 5: Train</a><a href="avatar.html">Step 6: Avatar</a></nav>
+  <h1>Step 5: Teach the network to lip-read sound</h1>
+  <p class="note">Input: 9 frames of MFCCs (300 ms of sound). Output: 27 jaw + mouth blendshapes. The camera's
+    measurements from your recordings are the answers it learns from. Everything runs in this browser tab.</p>
+
+  <h2>1. Load your takes</h2>
+  <div id="drop">Drag your take JSON files here (from your <code>data</code> folder), or
+    <label class="btn" for="fileInput" style="margin-left:.5rem">choose files</label>
+    <input type="file" id="fileInput" accept=".json" multiple />
+  </div>
+  <ul id="fileList"></ul>
+  <div class="status" id="dataSummary">no takes loaded</div>
+  <button class="secondary" id="clearFiles">clear list</button>
+
+  <h2>2. Train</h2>
+  <button id="trainBtn" disabled>🧠 Train model</button>
+  <div class="status" id="modelSummary"></div>
+  <div class="status" id="trainStatus"></div>
+  <canvas id="lossChart" width="900" height="220"></canvas>
+  <p class="note">Both lines should fall. When the orange (validation) line stops falling or rises while blue keeps
+    falling, the network has started memorising your recordings. We keep the weights from the green dot.</p>
+  <div id="evalSummary"></div>
+  <table id="evalTable"></table>
+
+  <h2>3. Test it live (no camera!)</h2>
+  <div class="row">
+    <button id="liveBtn" disabled>🎙 Start live test</button>
+    <label style="color:#bbb">smoothing <input type="range" id="smooth" min="0" max="0.85" step="0.05" value="0.4"></label>
+  </div>
+  <div class="status" id="liveInfo"></div>
+  <div class="row">
+    <canvas id="mouth" width="260" height="180"></canvas>
+    <div id="liveBars" style="flex:1;min-width:300px"></div>
+  </div>
+
+  <h2>4. Save for the public demo</h2>
+  <div class="status" id="savedInfo">no saved model yet</div>
+  <button class="secondary" id="downloadBtn" disabled>⬇ Download model files</button>
+  <p class="note">Gives you <code>lipsync-model.json</code> and <code>lipsync-model.weights.bin</code>. Put both in a
+    <code>model</code> folder in your project and commit them. That's how visitors to your GitHub Pages site get
+    your trained model. (The weights are just numbers; your recordings stay private.)</p>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script type="module" src="src/train.js"></script>
+</body>
+</html>
