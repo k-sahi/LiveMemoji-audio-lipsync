@@ -5,7 +5,7 @@ I trained it on my own voice, using webcam face tracking (MediaPipe) as automati
 The avatar is a 3D face mesh built from my iPhone Memoji. Memoji are animated with the same
 52 ARKit blendshapes this model predicts.
 
-> 🚧 Work in progress. Built step by step as a learning project.
+> 🚧 In progress. Built step by step as a learning project.
 
 ## Progress
 - [x] Step 1: Mic capture, waveform + spectrum visualization
@@ -14,7 +14,6 @@ The avatar is a 3D face mesh built from my iPhone Memoji. Memoji are animated wi
 - [x] Step 4: Synced audio + face recording to JSON (AudioWorklet frame clock at exactly 30 Hz, own FFT, timestamp-matched face labels, mic/camera delay estimate)
 - [x] Step 5: Train an MLP (117 → 128 → 64 → 27) in TensorFlow.js: time-based validation split, mic-delay correction, best-epoch selection, live test
 - [x] Step 6: 3D avatar from my Memoji: MediaPipe landmarks → Delaunay mesh with a mouth hole, lip-closing rest pose, procedural jaw/lip/round/smile deformation, mouth interior, blinking, brow raises on emphasis, speech-driven head nods, and a waving hand (MediaPipe HandLandmarker → colour-keyed flood-fill mask → onion-peel inpainting of the background)
-- [ ] Step 7: Deploy to GitHub Pages
 
 ## Run locally
 The browser only allows mic and camera access on `https://` or `localhost`, so serve the folder instead of opening the file directly:
