@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio Lipsync - Step 4: Record</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; }
+    nav a { color: #8ab4ff; margin-right: 1rem; }
+    button { font-size: 1rem; padding: .6rem 1.2rem; border-radius: 8px; border: 0; background: #4f8cff; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    button.secondary { background: #333; }
+    button.recording { background: #e5484d; }
+    .controls { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1rem 0 .5rem; }
+    .status { font-family: ui-monospace, monospace; color: #9ab; font-size: .85rem; margin: .4rem 0; }
+    .row { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-start; }
+    .left { width: 400px; max-width: 100%; }
+    .stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #1c1c1c; border-radius: 8px; overflow: hidden; }
+    .stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .meter { display: grid; grid-template-columns: 5.5rem 1fr; align-items: center; gap: .5rem; margin-top: .5rem; font-size: .85rem; color: #bbb; }
+    .track { height: 10px; background: #222; border-radius: 5px; overflow: hidden; }
+    .fill { height: 100%; width: 0; background: #4f8cff; transition: width 50ms linear; }
+    #jawFill { background: #ff6a5a; }
+    .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #444; vertical-align: middle; }
+    .dot.ok { background: #3ecf6e; } .dot.bad { background: #e5484d; }
+    .right { flex: 1; min-width: 300px; background: #1a1a1a; border-radius: 8px; padding: 1rem 1.25rem; }
+    .tab { padding: .3rem .8rem; margin-right: .3rem; background: #2a2a2a; }
+    .tab.active { background: #4f8cff; }
+    #script { font-size: 1.15rem; line-height: 1.7; }
+    #script .pause { color: #8ab4ff; font-size: .95rem; }
+    #script i { color: #999; font-size: .95rem; }
+    ul#summary { line-height: 1.9; padding-left: 0; list-style: none; }
+    details { margin-top: 1.5rem; color: #bbb; }
+    details li { margin: .3rem 0; }
+  </style>
+</head>
+<body>
+  <nav><a href="index.html">Step 2: Audio → MFCCs</a><a href="face.html">Step 3: Face tracking</a><a href="record.html">Step 4: Record</a><a href="train.html">Step 5: Train</a><a href="avatar.html">Step 6: Avatar</a></nav>
+  <h1>Step 4: Record training data</h1>
+
+  <div class="controls">
+    <button id="startBtn">🎙📷 Start mic + camera</button>
+    <button id="recBtn" disabled>⏺ Record</button>
+    <button id="dlBtn" class="secondary" disabled>⬇ Download JSON</button>
+    <button id="clearBtn" class="secondary" disabled>🗑 Clear</button>
+  </div>
+  <div class="status" id="status">click Start, then allow microphone and camera</div>
+  <div class="status" id="timer"></div>
+  <div class="status" id="micInfo"></div>
+
+  <div class="row">
+    <div class="left">
+      <div class="stage"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+      <div class="meter"><span>face <span class="dot" id="faceDot"></span></span><span style="color:#888;font-size:.8rem">green = face tracked</span></div>
+      <div class="meter"><span>mic level</span><div class="track"><div class="fill" id="levelFill"></div></div></div>
+      <div class="meter"><span>jawOpen</span><div class="track"><div class="fill" id="jawFill"></div></div></div>
+      <ul id="summary"></ul>
+    </div>
+
+    <div class="right">
+      <div><span id="takeTabs"></span> <b id="takeTitle"></b></div>
+      <div id="script"></div>
+    </div>
+  </div>
+
+  <details open>
+    <summary>Recording tips</summary>
+    <ul>
+      <li><b>Use your laptop's built-in mic or a wired mic, not AirPods/Bluetooth</b> (they delay the sound by up to 0.4 s).</li>
+      <li>Light on your face from the front (window or lamp behind your screen). Avoid strong backlight.</li>
+      <li>Sit about an arm's length away, face the camera, and keep your hands away from your mouth.</li>
+      <li>Speak at your normal volume. Vary pace and loudness a little; natural is better than perfect.</li>
+      <li>Keep this tab visible while recording (browsers slow down background tabs).</li>
+      <li>Do each take, then <b>Download JSON</b> before starting the next one. Mistakes are fine; just keep going.</li>
+    </ul>
+  </details>
+
+  <script type="module" src="src/record.js"></script>
+</body>
+</html>
