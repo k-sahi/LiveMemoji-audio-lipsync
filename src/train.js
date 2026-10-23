@@ -12,7 +12,7 @@
 // learning patterns that transfer to new speech.
 
 import { validateTake, buildDataset, pearson } from './dataset.js';
-import { Predictor, MODEL_KEY } from './predictor.js';
+import { Predictor, MODEL_KEY, exportModelFile } from './predictor.js';
 import { startMicFrames } from './audio.js';
 import { createFeatureExtractor } from './features.js';
 
@@ -212,7 +212,13 @@ function drawLossChart({ loss, val }, baseline, bestEpoch) {
 
 // ---- 3. download (to commit for the public demo) ------------------------------------
 $('downloadBtn').addEventListener('click', async () => {
-  if (predictor) await predictor.model.save('downloads://lipsync-model');
+  if (!predictor) return;
+  const blob = await exportModelFile(tf, predictor.model);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'lipsync-model.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
 // ---- 4. live test -------------------------------------------------------------------

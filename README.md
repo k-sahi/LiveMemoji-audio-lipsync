@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://k-sahi.github.io/audio-avatar-lipsync/"><b>▶ Live demo</b></a>
+  <a href="https://k-sahi.github.io/LiveMemoji-audio-lipsync/"><b>▶ Live demo</b></a>
 </p>
 
 ---
@@ -62,6 +62,7 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 | `src/avatar-geometry.js` | Landmarks → 3D mesh, mouth hole, lip closing, jaw/lip/smile deformation, blinks, brows |
 | `src/avatar-hand.js` | Hand cut-out (flood fill) and background inpainting |
 | `src/avatar.js` | Puts it all together in Three.js |
+| `src/main.js`, `src/face.js` | Page scripts for `audio.html` (live audio visualisations) and `face.html` (face tracking) |
 
 ## Things I learned the hard way
 

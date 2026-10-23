@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Audio Lipsync - Step 3: Face tracking</title>
+  <title>Face tracking: 52 blendshapes</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 980px; margin: 2rem auto; padding: 0 1rem; }
     nav a { color: #8ab4ff; margin-right: 1rem; }
@@ -28,8 +28,8 @@
   </style>
 </head>
 <body>
-  <nav><a href="index.html">Step 2: Audio → MFCCs</a><a href="face.html">Step 3: Face tracking</a><a href="record.html">Step 4: Record</a><a href="train.html">Step 5: Train</a><a href="avatar.html">Step 6: Avatar</a></nav>
-  <h1>Step 3: Reading your face</h1>
+  <nav style="margin-bottom:1rem"><a href="index.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">🗣 Avatar</a><a href="audio.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Audio features</a><a href="face.html" style="color:#fff;font-weight:600;margin-right:1rem;text-decoration:none">Face tracking</a><a href="record.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Record</a><a href="train.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Train</a><a href="https://github.com/k-sahi/LiveMemoji-audio-lipsync" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">GitHub ↗</a></nav>
+  <h1>Reading a face</h1>
   <p class="note">MediaPipe FaceLandmarker finds 478 3D points on your face and estimates 52 ARKit-style blendshapes
     (0 = relaxed, 1 = fully engaged). The red rows (jaw + mouth) are what the model will learn to predict from audio.</p>
 

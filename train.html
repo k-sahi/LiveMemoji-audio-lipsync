@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Audio Lipsync - Step 5: Train</title>
+  <title>Train the lipsync model</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 980px; margin: 2rem auto; padding: 0 1rem; }
     nav a { color: #8ab4ff; margin-right: 1rem; }
@@ -29,8 +29,8 @@
   </style>
 </head>
 <body>
-  <nav><a href="index.html">Step 2: Audio → MFCCs</a><a href="face.html">Step 3: Face tracking</a><a href="record.html">Step 4: Record</a><a href="train.html">Step 5: Train</a><a href="avatar.html">Step 6: Avatar</a></nav>
-  <h1>Step 5: Teach the network to lip-read sound</h1>
+  <nav style="margin-bottom:1rem"><a href="index.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">🗣 Avatar</a><a href="audio.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Audio features</a><a href="face.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Face tracking</a><a href="record.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Record</a><a href="train.html" style="color:#fff;font-weight:600;margin-right:1rem;text-decoration:none">Train</a><a href="https://github.com/k-sahi/LiveMemoji-audio-lipsync" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">GitHub ↗</a></nav>
+  <h1>Teach the network to lip-read sound</h1>
   <p class="note">Input: 9 frames of MFCCs (300 ms of sound). Output: 27 jaw + mouth blendshapes. The camera's
     measurements from your recordings are the answers it learns from. Everything runs in this browser tab.</p>
 
@@ -66,9 +66,9 @@
 
   <h2>4. Save for the public demo</h2>
   <div class="status" id="savedInfo">no saved model yet</div>
-  <button class="secondary" id="downloadBtn" disabled>⬇ Download model files</button>
-  <p class="note">Gives you <code>lipsync-model.json</code> and <code>lipsync-model.weights.bin</code>. Put both in a
-    <code>model</code> folder in your project and commit them. That's how visitors to your GitHub Pages site get
+  <button class="secondary" id="downloadBtn" disabled>⬇ Download model file</button>
+  <p class="note">Gives you one file, <code>lipsync-model.json</code>, with the network and everything it learned inside.
+    Put it in the <code>model</code> folder of your project and commit it. That's how visitors to your GitHub Pages site get
     your trained model. (The weights are just numbers; your recordings stay private.)</p>
 
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>

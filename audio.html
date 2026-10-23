@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio features: from sound to MFCCs</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 820px; margin: 2rem auto; padding: 0 1rem; }
+    button { font-size: 1rem; padding: .6rem 1.2rem; border-radius: 8px; border: 0; background: #4f8cff; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .7; cursor: default; }
+    canvas { width: 100%; background: #1c1c1c; border-radius: 8px; margin-top: .5rem; display: block; }
+    .stats { font-family: ui-monospace, monospace; color: #9ab; margin-top: .75rem; font-size: .85rem; }
+    pre { font-family: ui-monospace, monospace; font-size: .8rem; color: #cde; background: #1c1c1c; padding: .6rem; border-radius: 8px; white-space: pre-wrap; margin: .5rem 0 0; }
+    h3 { margin: 1.5rem 0 0; font-weight: 500; color: #bbb; }
+    p.note { margin: .25rem 0 0; color: #888; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <nav style="margin-bottom:1rem"><a href="index.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">🗣 Avatar</a><a href="audio.html" style="color:#fff;font-weight:600;margin-right:1rem;text-decoration:none">Audio features</a><a href="face.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Face tracking</a><a href="record.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Record</a><a href="train.html" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">Train</a><a href="https://github.com/k-sahi/LiveMemoji-audio-lipsync" style="color:#8ab4ff;margin-right:1rem;text-decoration:none">GitHub ↗</a></nav>
+  <h1>From sound to 13 numbers</h1>
+  <button id="start">🎙 Start mic</button>
+  <div class="stats" id="stats">not started</div>
+
+  <h3>1. Waveform</h3>
+  <canvas id="wave" width="800" height="100"></canvas>
+
+  <h3>2. Spectrum (512 FFT bins, 0–8 kHz shown)</h3>
+  <canvas id="spec" width="800" height="150"></canvas>
+
+  <h3>3. Mel filterbank (26 triangles)</h3>
+  <canvas id="bank" width="800" height="100"></canvas>
+  <p class="note">Each triangle sums the spectrum energy under it. They're narrow at low frequencies, where formants live, and wide at high ones, matching how human hearing works.</p>
+
+  <h3>4. Mel spectrogram (26 bands over time)</h3>
+  <canvas id="mel" width="800" height="156"></canvas>
+  <p class="note">Bottom = low pitch, top = high. Time scrolls right to left. Look for the horizontal stripes (formants) moving when you change vowels.</p>
+
+  <h3>5. MFCCs (13 coefficients over time)</h3>
+  <canvas id="mfcc" width="800" height="156"></canvas>
+  <p class="note">Bottom row = c0 (loudness), top = c12. Colored as z-scores: red = above that coefficient's recent average, blue = below.</p>
+  <pre id="mfccText">c0 … c12 will appear here</pre>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
