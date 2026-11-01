@@ -11,7 +11,8 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 import { createLandmarker, createHandLandmarker } from './facemodel.js';
-import { buildFace, deform } from './avatar-geometry.js';
+import { buildFace, deform, attachVisemes } from './avatar-geometry.js';
+import { faceFrame } from './visemes.js';
 import { liftHand } from './avatar-hand.js';
 import { Predictor, MODEL_KEY, MODEL_URL } from './predictor.js';
 import { startMicFrames } from './audio.js';
@@ -25,7 +26,7 @@ const status = $('status');
 
 // ---- Three.js setup -------------------------------------------------------------
 const canvas = $('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true }); // stencil: mouth mask
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 const scene = new THREE.Scene();
 // Orthographic camera: no perspective, so at rest every pixel lines up exactly
@@ -57,7 +58,9 @@ let values = null;
 const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false, heardAt: 0, startedAt: 0 };
 const envelope = createVoiceEnvelope();
 let formants = null;
-const vowel = { open: 0, round: 0, spread: 0, voiced: false }; // smoothed mouth shape from formants
+const vowel = { open: 0, round: 0, spread: 0, fric: 0, voiced: false }; // smoothed mouth shape from formants
+let visemeFile = null;   // captured real-mouth motion (capture.html), if available
+const glance = { x: 0, y: 0, tx: 0, ty: 0, next: performance.now() + 2000 };
 const gain = () => Number($('gain').value);
 
 // ---- 1. build the avatar from a picture ---------------------------------------------
@@ -92,7 +95,10 @@ async function loadAvatar(src) {
   }
 
   const aspect = img.width / img.height;
-  face = buildFace(res.faceLandmarks[0], aspect, { depth: Number($('depth').value) });
+  // Build the new face separately; it replaces the old one only once everything is ready.
+  const nextFace = buildFace(res.faceLandmarks[0], aspect, { depth: Number($('depth').value) });
+  if (visemeFile) attachVisemes(nextFace, visemeFile);
+  nextFace.frame = faceFrame((i) => [nextFace.rest[i * 3], nextFace.rest[i * 3 + 1], nextFace.rest[i * 3 + 2]]);
 
   // Pixels: original (for the face), and, if there's a hand, a hand layer + a background without it.
   const W = img.width, H = img.height;
@@ -122,8 +128,10 @@ async function loadAvatar(src) {
     handTexture = tex(layer(lifted.handRGBA));
   }
 
-  // Remove the previous avatar, if any.
+  // Remove the previous avatar, if any, and switch to the new face.
+  face = null;
   root.clear();
+  face = nextFace;
 
   const flat = (map, order, extra = {}) => new THREE.MeshBasicMaterial({ map, depthTest: false, depthWrite: false, ...extra });
 
@@ -167,34 +175,84 @@ async function loadAvatar(src) {
   $('waveBtn').disabled = !handRoot;
 
   status.textContent = `avatar ready: ${face.count} points, ${face.info.triangles} triangles` +
+    (face.visemes ? ', mouth motion captured from a real face' : ', mouth motion: built-in rules') +
     (face.info.closedBy > 0 ? ', lips closed for the resting pose' : '') +
     (handRoot ? `, hand found${lifted.colorKeyed ? '' : ' (busy background: rough cut-out)'}` : ', no hand found');
 }
 
-// Inside of the mouth. Drawn BEFORE the face and ignoring depth; the face is
-// drawn on top, so these only ever show through the hole between the lips.
+// Inside of the mouth. First a MASK shaped exactly like the opening between the
+// inner lips is drawn into the stencil buffer (invisible). The dark cavity, teeth
+// and tongue are then drawn only where that mask is. So they always follow the
+// shape of the lips and can never poke out past them (no "fangs" at the corners).
+const INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
 function buildMouth(parent) {
   const { C, Wm, H, zBack } = face.info;
   const behind = (d) => Math.max(zBack + 0.002, C.z - d * H);
-  const mat = (color) => new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+  const inMouth = (color) => new THREE.MeshBasicMaterial({
+    color, depthTest: false, depthWrite: false,
+    stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc,
+    stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp,
+  });
 
-  const cavity = new THREE.Mesh(new THREE.CircleGeometry(1, 32), mat(0x2a0a0e));
-  cavity.scale.set(0.95 * Wm, 0.75 * Wm, 1);
-  cavity.position.set(C.x, C.y - 0.15 * Wm, behind(0.045));
+  // Mask: a fan of triangles from the mouth centre to each inner-lip point.
+  const n = INNER_LIP.length;
+  const maskGeo = new THREE.BufferGeometry();
+  maskGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((n + 1) * 3), 3));
+  const idx = [];
+  for (let i = 0; i < n; i++) idx.push(n, i, (i + 1) % n);
+  maskGeo.setIndex(idx);
+  const mask = new THREE.Mesh(maskGeo, new THREE.MeshBasicMaterial({
+    colorWrite: false, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp,
+  }));
+  mask.renderOrder = 0.5;
+  mask.frustumCulled = false;
 
-  const teethGeo = new THREE.PlaneGeometry(1.45 * Wm, 0.32 * Wm);
-  const upperTeeth = new THREE.Mesh(teethGeo, mat(0xf1ece2));
-  upperTeeth.position.set(C.x, C.y + 0.1 * Wm, behind(0.012));
-  const lowerTeeth = new THREE.Mesh(teethGeo, mat(0xe6e0d4));
-  lowerTeeth.position.set(C.x, C.y - 0.3 * Wm, behind(0.016));
+  // Dark mouth: a radial gradient (darker at the back) so it has depth.
+  const g = document.createElement('canvas'); g.width = g.height = 64;
+  const gc = g.getContext('2d'), grad = gc.createRadialGradient(32, 26, 4, 32, 32, 32);
+  grad.addColorStop(0, '#12030a'); grad.addColorStop(1, '#4a1420');
+  gc.fillStyle = grad; gc.fillRect(0, 0, 64, 64);
+  const cavityMat = inMouth(0xffffff); cavityMat.map = new THREE.CanvasTexture(g);
+  const cavity = new THREE.Mesh(new THREE.PlaneGeometry(2.6 * Wm, 2.2 * Wm), cavityMat);
+  cavity.position.set(C.x, C.y - 0.2 * Wm, behind(0.045));
 
-  const tongue = new THREE.Mesh(new THREE.CircleGeometry(1, 24), mat(0xa8404c));
-  tongue.scale.set(0.6 * Wm, 0.28 * Wm, 1);
+  // Teeth: rounded strips (ellipse segments) under the upper lip and above the lower lip.
+  const teethShape = (w, h, up) => {
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2, 0);
+    sh.quadraticCurveTo(0, (up ? -1 : 1) * h * 0.35, w / 2, 0);
+    sh.lineTo(w / 2, (up ? 1 : -1) * h);
+    sh.lineTo(-w / 2, (up ? 1 : -1) * h);
+    return new THREE.ShapeGeometry(sh);
+  };
+  const upperTeeth = new THREE.Mesh(teethShape(1.5 * Wm, 0.5 * Wm, true), inMouth(0xf4f0e8));
+  upperTeeth.position.set(C.x, C.y - 0.1 * Wm, behind(0.012));
+  const lowerTeeth = new THREE.Mesh(teethShape(1.3 * Wm, 0.5 * Wm, false), inMouth(0xe4ddd0));
+  lowerTeeth.position.set(C.x, C.y - 0.06 * Wm, behind(0.016));
+
+  const tongue = new THREE.Mesh(new THREE.CircleGeometry(1, 32), inMouth(0xb24a58));
+  tongue.scale.set(0.75 * Wm, 0.35 * Wm, 1);
   tongue.position.set(C.x, C.y - 0.45 * Wm, behind(0.03));
 
-  [cavity, tongue, lowerTeeth, upperTeeth].forEach((m, i) => { m.renderOrder = 1 + i; });
-  parent.add(cavity, upperTeeth, lowerTeeth, tongue);
-  mouthParts = { lowerTeeth, tongue, lowerY: lowerTeeth.position.y, tongueY: tongue.position.y };
+  [cavity, tongue, lowerTeeth, upperTeeth].forEach((m, i) => { m.renderOrder = 1 + i; m.frustumCulled = false; });
+  parent.add(mask, cavity, upperTeeth, lowerTeeth, tongue);
+  mouthParts = { mask, upperTeeth, lowerTeeth, tongue, upperY: upperTeeth.position.y, lowerY: lowerTeeth.position.y, tongueY: tongue.position.y, z: behind(0) };
+}
+
+// Each frame: reshape the mask to the current inner-lip points (slightly enlarged so no seam shows).
+function updateMouthMask(pos) {
+  const arr = mouthParts.mask.geometry.attributes.position.array;
+  const n = INNER_LIP.length;
+  let cx = 0, cy = 0;
+  for (const i of INNER_LIP) { cx += pos[i * 3] / n; cy += pos[i * 3 + 1] / n; }
+  INNER_LIP.forEach((i, k) => {
+    arr[k * 3] = cx + (pos[i * 3] - cx) * 1.06;
+    arr[k * 3 + 1] = cy + (pos[i * 3 + 1] - cy) * 1.12;
+    arr[k * 3 + 2] = mouthParts.z;
+  });
+  arr[n * 3] = cx; arr[n * 3 + 1] = cy; arr[n * 3 + 2] = mouthParts.z;
+  mouthParts.mask.geometry.attributes.position.needsUpdate = true;
 }
 
 // ---- 2. model + microphone ------------------------------------------------------------
@@ -257,11 +315,41 @@ $('micBtn').addEventListener('click', async (e) => {
 function updateVowel(f) {
   const env = envelope.value;
   let target;
-  if (f && env > 0.05) target = { ...vowelShape(f), voiced: true };
-  else if (env > 0.15) target = { open: 0, round: 0, spread: 0.35, voiced: false };
-  else target = { open: vowel.open, round: 0, spread: 0, voiced: false };
-  for (const k of ['open', 'round', 'spread']) vowel[k] += (target[k] - vowel[k]) * 0.35;
+  if (f && env > 0.05) target = { ...vowelShape(f), fric: 0, voiced: true };
+  else if (env > 0.15) target = { open: 0, round: 0, spread: 0.35, fric: 1, voiced: false };
+  else target = { open: vowel.open, round: 0, spread: 0, fric: 0, voiced: false };
+  for (const k of ['open', 'round', 'spread', 'fric']) vowel[k] += (target[k] - vowel[k]) * 0.35;
   vowel.voiced = target.voiced;
+}
+
+// How much of each captured real-mouth shape to use right now.
+function visemeWeights() {
+  const env = envelope.value;
+  const speaking = Math.min(1, env / 0.12);
+  const k = gain() / 1.6; // the expressiveness slider (1.6 = default)
+  const c = (v) => Math.min(1.2, Math.max(0, v * k));
+  return {
+    ah: c(Math.pow(env, 0.75) * (0.15 + 0.85 * vowel.open)),
+    oo: c(vowel.round * speaking),
+    ee: c(0.9 * vowel.spread * speaking),
+    ff: c(0.8 * vowel.fric * speaking),
+    smile: c(0.12 + 0.25 * anim.brow),
+  };
+}
+
+// Eyes glance around now and then, like a person thinking or listening.
+function moveEyes(pos, now) {
+  if (now > glance.next) {
+    const r = Math.random();
+    [glance.tx, glance.ty] = r < 0.45 ? [0, 0] : r < 0.65 ? [-1, 0] : r < 0.85 ? [1, 0] : [Math.random() * 2 - 1, -0.6];
+    glance.next = now + 1200 + Math.random() * 2800;
+  }
+  glance.x += (glance.tx - glance.x) * 0.3;   // quick, like a real eye movement
+  glance.y += (glance.ty - glance.y) * 0.3;
+  const { ux, iod } = face.frame;
+  const amp = 0.045 * iod;
+  const dx = (glance.x * ux[0] + glance.y * ux[1]) * amp, dy = (glance.x * ux[1] - glance.y * ux[0]) * amp;
+  for (let i = 468; i < Math.min(478, face.count); i++) { pos[i * 3] += dx; pos[i * 3 + 1] += dy; }
 }
 
 // Speech detection, used to start a wave when you begin talking after a pause.
@@ -351,7 +439,7 @@ canvas.addEventListener('dblclick', () => { yaw = pitch = 0; });
 const debugRows = $('debug');
 function frame(t) {
   requestAnimationFrame(frame);
-  if (face) {
+  if (face && faceGeo && mouthParts) {
     const now = performance.now();
     const alive = $('alive').checked;
 
@@ -360,9 +448,14 @@ function frame(t) {
     anim.brow += ((alive ? emphasis : 0) - anim.brow) * 0.15;
 
     const pos = faceGeo.attributes.position.array;
-    const { jawDrop } = deform(face, blendshape, pos, { blink: alive ? blinkAmount(now) : 0, brow: anim.brow });
+    const { jawDrop, upperLift = 0 } = deform(face, blendshape, pos, {
+      blink: alive ? blinkAmount(now) : 0, brow: anim.brow, visemes: face.visemes ? visemeWeights() : null,
+    });
+    if (alive) moveEyes(pos, now);
     faceGeo.attributes.position.needsUpdate = true;
     faceGeo.computeBoundingSphere();
+    updateMouthMask(pos);
+    mouthParts.upperTeeth.position.y = mouthParts.upperY + upperLift;
     mouthParts.lowerTeeth.position.y = mouthParts.lowerY - jawDrop;
     mouthParts.tongue.position.y = mouthParts.tongueY - jawDrop * 0.85;
 
@@ -381,6 +474,7 @@ function frame(t) {
     root.rotation.z = idle * (0.012 * Math.sin(s * 0.5) + 0.018 * anim.talk * Math.sin(s * 1.9));
     root.position.y = idle * (0.004 * Math.sin(s * 0.8) - 0.012 * env);
     root.position.x = idle * 0.006 * anim.talk * Math.sin(s * 1.1);
+    root.scale.set(1, 1 + idle * 0.004 * Math.sin(s * 2 * Math.PI * 0.22), 1); // breathing
 
     if (handRoot) handRoot.rotation.z = alive || anim.waveStart >= 0 ? waveAngle(now) : 0;
   }
@@ -398,7 +492,9 @@ function frame(t) {
   }
 
   if (values && $('showDebug').checked) {
-    debugRows.textContent = `vowel: open ${vowel.open.toFixed(2)}  round ${vowel.round.toFixed(2)}  spread ${vowel.spread.toFixed(2)}\n` + ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthLowerDownLeft', 'mouthUpperUpLeft']
+    const vw = face?.visemes ? visemeWeights() : null;
+    debugRows.textContent = `vowel: open ${vowel.open.toFixed(2)}  round ${vowel.round.toFixed(2)}  spread ${vowel.spread.toFixed(2)}\n` +
+      (vw ? 'captured shapes: ' + Object.entries(vw).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ') + '\n' : '') + ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthLowerDownLeft', 'mouthUpperUpLeft']
       .map((n) => `${n.padEnd(19)} ${'█'.repeat(Math.round(blendshape(n) * 20)).padEnd(20, '·')} ${blendshape(n).toFixed(2)}`)
       .join('\n');
   } else if (!$('showDebug').checked) {
@@ -424,7 +520,15 @@ $('depth').addEventListener('change', async () => {
 // ---- start ---------------------------------------------------------------------------
 resize();
 loadModel();
-loadAvatar(currentSrc).catch((err) => {
+(async () => {
+  // Captured mouth motion: this browser's own capture first, then the repo's copy.
+  try { visemeFile = JSON.parse(localStorage.getItem('lipsync-visemes')); } catch { visemeFile = null; }
+  if (!visemeFile) {
+    try { const r = await fetch('model/visemes.json', { cache: 'no-cache' }); if (r.ok) visemeFile = await r.json(); } catch { /* none yet */ }
+  }
+  if (visemeFile?.format !== 'lipsync-visemes-v1') visemeFile = null;
+  await loadAvatar(currentSrc);
+})().catch((err) => {
   status.textContent = `couldn't load avatar.png (${err.message}). Choose your picture with the button below, ` +
     'or save it as avatar.png in the project folder.';
 });

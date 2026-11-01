@@ -36,7 +36,11 @@
    and move the vertices in **Three.js**. The mouth shape comes from the voice's **formants** (the resonances
    of your mouth, found with LPC): a high F1 opens it ("ah"), a low F2 rounds it ("oo"), a high F2 spreads it ("ee").
    How far it opens follows your loudness against your own mic's background level, so it works on any
-   microphone, and the network adds detail on top. On top: blinking, eyebrows that lift
+   microphone, and the network adds detail on top.
+   **Real mouth motion:** on the Mouth capture page I recorded my own mouth making 7 shapes; the webcam
+   measured how all 478 face points move for each (with head movement removed). Those motions are scaled to
+   any picture's eye distance and tilt and blended by the voice, so any face moves like a real mouth.
+   The inside of the mouth is clipped to the lips with a stencil mask. On top: blinking, eyebrows that lift
    on emphasis, head nods with speech, and a hand that waves (found with MediaPipe's hand tracker, cut out
    with a colour-keyed flood fill, and painted out of the background).
 
@@ -48,6 +52,7 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 |---|---|
 | [`index.html`](index.html) | The talking 3D Memoji |
 | [`audio.html`](audio.html) | Live waveform, spectrum, mel filterbank and MFCC heatmaps |
+| [`capture.html`](capture.html) | Captures how a real mouth moves (7 shapes, head motion removed) so any face can move the same way |
 | [`face.html`](face.html) | Live face tracking with all 52 blendshapes, plus an avatar-picture checker |
 | [`record.html`](record.html) | Records training data: voice features paired with face blendshapes |
 | [`train.html`](train.html) | Trains the network, scores it, and tests it live with no camera |
@@ -64,6 +69,7 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 | `src/train.js`, `src/predictor.js` | TensorFlow.js training (best-epoch selection) and streaming prediction |
 | `src/avatar-geometry.js` | Landmarks → 3D mesh, mouth hole, lip closing, jaw/lip/smile deformation, blinks, brows |
 | `src/avatar-hand.js` | Hand cut-out (flood fill) and background inpainting |
+| `src/visemes.js`, `src/capture.js` | Real-mouth motion capture: similarity alignment, eye-distance normalisation, retargeting to any face |
 | `src/formants.js` | LPC formant tracking (F1/F2) → open / round / spread mouth shapes, on any mic |
 | `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
 | `src/avatar.js` | Puts it all together in Three.js |

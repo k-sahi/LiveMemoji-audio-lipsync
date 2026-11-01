@@ -12,6 +12,8 @@
 //     rounding ("oo"), and each smile corner. deform() mixes those by the
 //     predicted blendshapes, every frame.
 
+import { SHAPES, retarget } from './visemes.js';
+
 // Landmark index loops from MediaPipe's face mesh topology.
 export const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400,
   377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
@@ -26,7 +28,7 @@ const EYES = [
 ];
 const BROWS = [70, 63, 105, 66, 107, 46, 53, 52, 65, 55, 300, 293, 334, 296, 336, 276, 283, 282, 295, 285];
 const TOP = 10, CHIN = 152, UPPER_MID = 13, LOWER_MID = 14, CORNER_R = 61, CORNER_L = 291;
-const NUM_MESH_POINTS = 468; // 468–477 are iris points; not needed for the mesh
+const NUM_MESH_POINTS = 478; // 0–467 face, 468–477 irises (included so the eyes can glance around)
 
 const smooth = (e0, e1, x) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -245,7 +247,8 @@ export function buildFace(landmarks, aspect, { depth = 1 } = {}) {
  * @param {Float32Array} out positions to write (same length as face.rest)
  * @returns {{open:number}} how far the jaw dropped (scene units), for the teeth/tongue
  */
-export function deform(face, g, out, { blink = 0, brow = 0 } = {}) {
+export function deform(face, g, out, { blink = 0, brow = 0, visemes = null } = {}) {
+  if (face.visemes && visemes) return deformCaptured(face, visemes, out, { blink, brow });
   const { rest, weights: w, count, info } = face;
   const { C, H, Wm } = info;
   const clamp = (v) => Math.min(1, Math.max(0, v));
@@ -270,6 +273,13 @@ export function deform(face, g, out, { blink = 0, brow = 0 } = {}) {
     out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z;
   }
 
+  applyEyesAndBrows(face, out, blink, brow);
+  return { jawDrop, round };
+}
+
+/** Brows and blinks, shared by both mouth methods. */
+function applyEyesAndBrows(face, out, blink, brow) {
+  const { weights: w, count, info: { H } } = face;
   // Brows lift (and the forehead skin with them).
   if (brow > 0) for (let i = 0; i < count; i++) out[i * 3 + 1] += brow * 0.025 * H * w.brow[i];
 
@@ -291,5 +301,39 @@ export function deform(face, g, out, { blink = 0, brow = 0 } = {}) {
       }
     }
   }
-  return { jawDrop, round };
+}
+
+// ---- captured mouth motion (visemes.js) ------------------------------------------------
+
+
+/** Convert a capture file's motions into this face's coordinates (call once per picture). */
+export function attachVisemes(face, file) {
+  face.visemes = {};
+  const n = Math.min(face.count, file.points ?? face.count);
+  for (const k of SHAPES) {
+    if (!file.deltas?.[k]) continue;
+    const d = retarget(Float32Array.from(file.deltas[k]), face.rest, n);
+    face.visemes[k] = d;
+  }
+  face.visemeCount = n;
+}
+
+/**
+ * Mouth = rest + Σ weight × captured motion. Linear blending of real shapes is how
+ * blendshape animation works in film/games: "ah" + "oo" gives an "aw", and so on.
+ * @param weights e.g. { ah: 0.7, oo: 0.2 }
+ */
+function deformCaptured(face, weights, out, { blink, brow }) {
+  const { rest, count } = face;
+  out.set(rest);
+  for (const [k, wgt] of Object.entries(weights)) {
+    const d = face.visemes[k];
+    if (!d || wgt <= 0) continue;
+    for (let i = 0; i < face.visemeCount * 3; i++) out[i] += wgt * d[i];
+  }
+  // How far the lower lip moved down / upper lip up: the teeth and tongue follow them.
+  const jawDrop = Math.max(0, rest[14 * 3 + 1] - out[14 * 3 + 1]);
+  const upperLift = out[13 * 3 + 1] - rest[13 * 3 + 1];
+  applyEyesAndBrows(face, out, blink, brow);
+  return { jawDrop, upperLift, count };
 }
