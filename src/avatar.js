@@ -69,19 +69,15 @@ async function loadAvatar(src) {
   const original = new Image();
   original.src = src;
   await original.decode();
-  // Big phone photos (12 MP+) make face finding and the hand cut-out slow, so
-  // work on a copy at most 1024 px on its longest side.
-  const scale = Math.min(1, 1024 / Math.max(original.naturalWidth, original.naturalHeight));
-  const img = document.createElement('canvas');
-  img.width = Math.round(original.naturalWidth * scale);
-  img.height = Math.round(original.naturalHeight * scale);
-  img.getContext('2d').drawImage(original, 0, 0, img.width, img.height);
 
-  status.textContent = 'finding face landmarks…';
+  status.textContent = 'finding the face…';
   const faceFinder = await createLandmarker('IMAGE');
-  const res = faceFinder.detect(img);
-  faceFinder.close();
-  if (!res.faceLandmarks.length) throw new Error('no face found in this picture; try a front-facing one');
+  let img, res, notes;
+  try {
+    ({ img, res, notes } = framePicture(original, faceFinder, { crop: src !== DEFAULT_PICTURE }));
+  } finally {
+    faceFinder.close();
+  }
 
   status.textContent = 'looking for a hand…';
   let hand = null;
@@ -174,11 +170,113 @@ async function loadAvatar(src) {
   }
   $('waveBtn').disabled = !handRoot;
 
-  status.textContent = `avatar ready: ${face.count} points, ${face.info.triangles} triangles` +
+  status.textContent = (notes.length ? notes.join(' ') + ' ' : '') + `avatar ready: ${face.count} points, ${face.info.triangles} triangles` +
     (face.visemes ? ', mouth motion captured from a real face' : ', mouth motion: built-in rules') +
     (face.info.closedBy > 0 ? ', lips closed for the resting pose' : '') +
     (handRoot ? `, hand found${lifted.colorKeyed ? '' : ' (busy background: rough cut-out)'}` : ', no hand found');
 }
+
+// ---- getting any picture ready --------------------------------------------------------
+const DEFAULT_PICTURE = 'avatar.png';
+const BACKDROP = '#1b2030';
+
+/**
+ * Prepare a picture: flatten transparency onto a backdrop (Memoji stickers are
+ * transparent PNGs), find the face, and crop a square around it so a small face
+ * in a big photo still fills the view. Returns the canvas, the face result and
+ * friendly notes about anything that may look worse.
+ */
+function framePicture(original, faceFinder, { crop }) {
+  const fit = (w, h, max) => Math.min(1, max / Math.max(w, h));
+  const draw = (sx, sy, sw, sh, outMax) => {
+    const k = fit(sw, sh, outMax);
+    const c = document.createElement('canvas');
+    c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+    const g = c.getContext('2d');
+    g.fillStyle = BACKDROP; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(original, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c;
+  };
+  const W0 = original.naturalWidth, H0 = original.naturalHeight;
+  let img = draw(0, 0, W0, H0, 1600);
+  let res = faceFinder.detect(img);
+  if (!res.faceLandmarks.length) {
+    throw new Error('no face found. Try a clear, front-facing photo where the face is not covered (no sunglasses or hands over it).');
+  }
+  if (crop) {
+    const lm = res.faceLandmarks[0];
+    const xs = lm.map((p) => p.x * W0), ys = lm.map((p) => p.y * H0);
+    const fw = Math.max(...xs) - Math.min(...xs), fh = Math.max(...ys) - Math.min(...ys);
+    const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2 + 0.12 * fh;
+    const side = Math.min(W0, H0, 2.4 * Math.max(fw, fh));
+    const sx = Math.min(Math.max(0, cx - side / 2), W0 - side), sy = Math.min(Math.max(0, cy - side / 2), H0 - side);
+    img = draw(sx, sy, side, side, 1024);
+    res = faceFinder.detect(img);
+    if (!res.faceLandmarks.length) throw new Error('lost the face after cropping. Try a photo where the face is larger.');
+  } else if (Math.max(img.width, img.height) > 1024) {
+    img = draw(0, 0, W0, H0, 1024);
+    res = faceFinder.detect(img);
+  }
+  const notes = [];
+  const m = res.facialTransformationMatrixes?.[0]?.data;
+  if (m) {
+    const yaw = Math.abs(Math.atan2(m[8], m[10]) * 57.3);
+    if (yaw > 20) notes.push(`⚠️ The face is turned ${yaw.toFixed(0)}° sideways; a front-facing photo looks better.`);
+  }
+  const jaw = res.faceBlendshapes?.[0]?.categories.find((c) => c.categoryName === 'jawOpen')?.score ?? 0;
+  if (jaw > 0.35) notes.push('ℹ️ The mouth is open in this photo; a closed-mouth photo looks most natural.');
+  return { img, res, notes };
+}
+
+// ---- trying your own face: selfie, upload, drag-and-drop ----------------------------------
+async function useOwnPicture(src) {
+  currentSrc = src;
+  $('resetBtn').hidden = src === DEFAULT_PICTURE;
+  try {
+    await loadAvatar(src);
+    $('scene').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (err) {
+    status.textContent = '⚠️ ' + err.message;
+    if (src !== DEFAULT_PICTURE) { currentSrc = DEFAULT_PICTURE; $('resetBtn').hidden = true; }
+  }
+}
+
+$('selfieBtn').addEventListener('click', async (e) => {
+  const btn = e.target, video = $('selfieVideo');
+  btn.disabled = true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 720, facingMode: 'user' } });
+    video.srcObject = stream;
+    video.hidden = false;
+    await video.play();
+    for (let n = 3; n > 0; n--) { $('selfieCount').textContent = `Look at the camera, mouth closed… ${n}`; await new Promise((r) => setTimeout(r, 1000)); }
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    $('selfieCount').textContent = '📸';
+    await useOwnPicture(c.toDataURL('image/jpeg', 0.92));
+  } catch (err) {
+    $('selfieCount').textContent = err.name === 'NotAllowedError' ? '⚠️ Camera access was blocked.' : '⚠️ ' + err.message;
+  } finally {
+    stream?.getTracks().forEach((t) => t.stop());
+    video.hidden = true;
+    btn.disabled = false;
+    setTimeout(() => { if ($('selfieCount').textContent === '📸') $('selfieCount').textContent = ''; }, 1500);
+  }
+});
+
+$('resetBtn').addEventListener('click', () => useOwnPicture(DEFAULT_PICTURE));
+
+// Drag a picture onto the avatar.
+canvas.addEventListener('dragover', (e) => { e.preventDefault(); canvas.classList.add('dropping'); });
+canvas.addEventListener('dragleave', () => canvas.classList.remove('dropping'));
+canvas.addEventListener('drop', (e) => {
+  e.preventDefault();
+  canvas.classList.remove('dropping');
+  const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+  if (file) useOwnPicture(URL.createObjectURL(file));
+});
 
 // Inside of the mouth. First a MASK shaped exactly like the opening between the
 // inner lips is drawn into the stencil buffer (invisible). The dark cavity, teeth
@@ -506,12 +604,11 @@ requestAnimationFrame(frame);
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // ---- 5. picture controls ---------------------------------------------------------------
-let currentSrc = 'avatar.png';
-$('photoInput').addEventListener('change', async (e) => {
+let currentSrc = DEFAULT_PICTURE;
+$('photoInput').addEventListener('change', (e) => {
   const file = e.target.files[0];
-  if (!file) return;
-  currentSrc = URL.createObjectURL(file);
-  try { await loadAvatar(currentSrc); } catch (err) { status.textContent = 'error: ' + err.message; }
+  if (file) useOwnPicture(URL.createObjectURL(file));
+  e.target.value = ''; // so choosing the same file again still triggers
 });
 $('depth').addEventListener('change', async () => {
   if (face) try { await loadAvatar(currentSrc); } catch (err) { status.textContent = 'error: ' + err.message; }

@@ -19,6 +19,15 @@
     .ctrl { display: grid; grid-template-columns: 9rem 1fr; align-items: center; gap: .5rem; margin: .6rem 0; color: #bbb; font-size: .9rem; }
     pre#debug { font-family: ui-monospace, monospace; font-size: .75rem; color: #ff8a7a; min-height: 6em; }
     p.note { color: #888; font-size: .85rem; }
+    button.secondary { background: #2b3242; }
+    .tryit { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; background: #1a1e28; border: 1px solid #2b3242;
+      border-radius: 12px; padding: .8rem 1rem; margin: .5rem 0 1rem; }
+    .tryit .hint { color: #8a93a6; font-size: .85rem; flex-basis: 100%; }
+    .tryit .selfie { display: flex; align-items: center; gap: .75rem; flex-basis: 100%; }
+    #selfieVideo { width: 200px; border-radius: 10px; transform: scaleX(-1); }
+    #selfieVideo[hidden] { display: none; }
+    #selfieCount { font-size: 1.1rem; color: #eee; }
+    #scene.dropping { outline: 3px dashed #4f8cff; outline-offset: 4px; }
     [hidden] { display: none !important; }
     ol.howto { color: #ddd; line-height: 1.7; padding-left: 1.3rem; margin: .25rem 0 .5rem; }
     .meterTrack { height: 10px; background: #222; border-radius: 5px; overflow: hidden; }
@@ -35,6 +44,16 @@
   </ol>
   <p class="note" style="max-width:760px">A small neural network I trained on my own voice shapes the mouth from the sound,
     on top of the jaw opening with your loudness. Everything runs in your browser; no audio leaves your computer.</p>
+
+  <div class="tryit">
+    <b>Try it with your own face:</b>
+    <button id="selfieBtn" class="secondary">📷 Take a selfie</button>
+    <label class="btn secondary" for="photoInput">🖼 Upload a photo</label>
+    <input type="file" id="photoInput" accept="image/*" />
+    <button id="resetBtn" class="secondary" hidden>↩ Back to my Memoji</button>
+    <span class="hint">or drag a picture onto the avatar. Photos and Memoji stickers both work; they never leave your device.</span>
+    <div class="selfie"><video id="selfieVideo" hidden playsinline muted></video><span id="selfieCount"></span></div>
+  </div>
 
   <div class="layout">
     <canvas id="scene"></canvas>
@@ -55,8 +74,6 @@
       <div class="ctrl"><span>show predictions</span><input type="checkbox" id="showDebug"></div>
       <pre id="debug"></pre>
 
-      <label class="btn secondary" for="photoInput">🖼 Use a different picture</label>
-      <input type="file" id="photoInput" accept="image/*" />
       <p class="note">Drag the face to turn it, double-click to reset. Only the face turns; hair and body stay put, because a single front-facing picture has no information about the sides or back of the head.</p>
     </div>
   </div>
