@@ -16,6 +16,7 @@ import { liftHand } from './avatar-hand.js';
 import { Predictor, MODEL_KEY, MODEL_URL } from './predictor.js';
 import { startMicFrames } from './audio.js';
 import { createFeatureExtractor } from './features.js';
+import { createVoiceEnvelope } from './voice-envelope.js';
 
 const tf = window.tf;
 const $ = (id) => document.getElementById(id);
@@ -52,15 +53,23 @@ let mouthParts = null;
 let handRoot = null;      // group the hand waves with (pivot at the wrist)
 let predictor = null;
 let values = null;
-const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false };
+const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false, heardAt: 0, startedAt: 0 };
+const envelope = createVoiceEnvelope();
 const gain = () => Number($('gain').value);
 
 // ---- 1. build the avatar from a picture ---------------------------------------------
 async function loadAvatar(src) {
   status.textContent = 'loading picture…';
-  const img = new Image();
-  img.src = src;
-  await img.decode();
+  const original = new Image();
+  original.src = src;
+  await original.decode();
+  // Big phone photos (12 MP+) make face finding and the hand cut-out slow, so
+  // work on a copy at most 1024 px on its longest side.
+  const scale = Math.min(1, 1024 / Math.max(original.naturalWidth, original.naturalHeight));
+  const img = document.createElement('canvas');
+  img.width = Math.round(original.naturalWidth * scale);
+  img.height = Math.round(original.naturalHeight * scale);
+  img.getContext('2d').drawImage(original, 0, 0, img.width, img.height);
 
   status.textContent = 'finding face landmarks…';
   const faceFinder = await createLandmarker('IMAGE');
@@ -79,11 +88,11 @@ async function loadAvatar(src) {
     console.warn('hand detection failed', err);
   }
 
-  const aspect = img.naturalWidth / img.naturalHeight;
+  const aspect = img.width / img.height;
   face = buildFace(res.faceLandmarks[0], aspect, { depth: Number($('depth').value) });
 
   // Pixels: original (for the face), and, if there's a hand, a hand layer + a background without it.
-  const W = img.naturalWidth, H = img.naturalHeight;
+  const W = img.width, H = img.height;
   const cnv = document.createElement('canvas');
   cnv.width = W; cnv.height = H;
   const ctx = cnv.getContext('2d', { willReadFrequently: true });
@@ -189,8 +198,9 @@ function buildMouth(parent) {
 async function loadModel() {
   const found = await Predictor.load(tf, [MODEL_KEY, MODEL_URL]);
   if (!found) {
-    $('modelInfo').innerHTML = '⚠️ no trained model found. Train one on the <a href="train.html">Step 5 page</a> ' +
-      'or put <code>lipsync-model.json</code> + <code>.weights.bin</code> in a <code>model</code> folder.';
+    $('modelInfo').innerHTML = '⚠️ trained model not found: the mouth will follow loudness only. ' +
+      'Train one on the <a href="train.html">Train page</a> or add <code>model/lipsync-model.json</code>.';
+    $('micBtn').disabled = false;
     return;
   }
   predictor = found.predictor;
@@ -210,22 +220,29 @@ $('micBtn').addEventListener('click', async (e) => {
       onFrame: (samples) => {
         if (!features) return;
         const { mfcc, rms } = features.compute(samples);
+        envelope.update(rms);
+        if (envelope.value > 0.15) voice.heardAt = performance.now();
         const level = Math.min(1, Math.sqrt(rms) * 4);
         voice.level = 0.8 * voice.level + 0.2 * level;
         voice.fast = 0.6 * voice.fast + 0.4 * level;   // reacts within ~100 ms
         voice.slow = 0.97 * voice.slow + 0.03 * level;  // ~1 s average
         onVoiceLevel(level);
-        predictor.calibrate = $('calib').checked;
-        values = predictor.push(mfcc, Number($('smooth').value));
+        if (predictor) {
+          predictor.calibrate = $('calib').checked;
+          values = predictor.push(mfcc, Number($('smooth').value));
+        }
       },
     });
     features = createFeatureExtractor({ sampleRate: mic.sampleRate, fftSize: 1024 });
     e.target.textContent = '🎙 Listening';
-    const trainedMic = predictor.meta.mic;
-    $('micInfo').textContent = `mic: ${mic.micLabel}` +
-      (trainedMic && trainedMic !== mic.micLabel ? ` ⚠️ (model was trained with: ${trainedMic})` : '');
+    voice.startedAt = performance.now();
+    $('micInfo').textContent = `🎙 ${mic.micLabel}: talk and watch the mouth follow you`;
+    $('meterRow').hidden = false;
   } catch (err) {
-    $('micInfo').textContent = 'mic error: ' + err.message;
+    const denied = err.name === 'NotAllowedError' || err.name === 'SecurityError';
+    $('micInfo').textContent = denied
+      ? '⚠️ Microphone access was blocked. Click the icon at the left of the address bar, allow the microphone, and reload.'
+      : err.name === 'NotFoundError' ? '⚠️ No microphone found on this device.' : '⚠️ mic error: ' + err.message;
     e.target.disabled = false;
   }
 });
@@ -277,10 +294,21 @@ function waveAngle(now) {
 
 // ---- 4. animation loop -----------------------------------------------------------------
 const names = () => predictor?.meta.targetNames ?? [];
+// How the mouth is driven:
+//  - OPENING comes from loudness (voice-envelope.js): works on any mic, instantly.
+//  - SHAPE (rounding, smiles, lip movement) comes from the neural network.
+//  - In silence everything relaxes, so the mouth rests closed.
+// The model alone was trained on one mic and predicts cautious, small values,
+// so on its own the mouth barely moved for other people.
+const OPENING = new Set(['jawOpen', 'mouthLowerDownLeft', 'mouthLowerDownRight']);
 function blendshape(name) {
-  if (!values) return 0;
-  const i = names().indexOf(name);
-  return i < 0 ? 0 : Math.min(1, values[i] * gain());
+  const env = envelope.value;
+  const i = values ? names().indexOf(name) : -1;
+  const model = i < 0 ? 0 : values[i] * gain();
+  const speaking = Math.min(1, env * 4);                 // 0 in silence, 1 while talking
+  if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking, 0.7 * env));
+  if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking, 0.3 * env));
+  return Math.min(1, model * (0.25 + 0.75 * speaking));
 }
 
 // Drag to turn the face (limited: one picture only shows its front).
@@ -322,6 +350,17 @@ function frame(t) {
     if (handRoot) handRoot.rotation.z = alive || anim.waveStart >= 0 ? waveAngle(now) : 0;
   }
   renderer.render(scene, camera);
+
+  if (voice.startedAt) {
+    $('meter').style.width = Math.min(100, envelope.aboveFloor * 3.3) + '%';
+    const now = performance.now();
+    if (!voice.heardAt && now - voice.startedAt > 6000) {
+      $('micInfo').textContent = "⚠️ I can't hear you yet. Check the right microphone is selected " +
+        '(icon at the right of the address bar) and that it isn\'t muted.';
+    } else if (voice.heardAt && $('micInfo').textContent.startsWith('⚠️ I can')) {
+      $('micInfo').textContent = '🎙 hearing you: keep talking';
+    }
+  }
 
   if (values && $('showDebug').checked) {
     debugRows.textContent = ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthLowerDownLeft', 'mouthUpperUpLeft']

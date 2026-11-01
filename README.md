@@ -5,7 +5,7 @@
 <h1 align="center">Talking Memoji</h1>
 
 <p align="center">
-  <b>Audio-driven 3D lipsync in the browser.</b> I talk, and my Memoji talks back.<br>
+  <b>Audio-driven 3D lipsync in the browser.</b> I talk, and my Memoji lip-syncs with me.<br>
   A neural network I trained on my own voice turns sound into mouth movements, live.
 </p>
 
@@ -33,7 +33,9 @@
    On speech it never saw, it scores **0.59** (R², where 0 = guessing the average and 1 = perfect).
 4. **Animating.** MediaPipe finds 478 3D points on my Memoji picture. I connect them into a mesh
    (Delaunay triangulation) with a hole for the mouth, close the picture's smiling lips into a resting pose,
-   and move the vertices with the predicted blendshapes in **Three.js**. On top: blinking, eyebrows that lift
+   and move the vertices in **Three.js**. The jaw opens with your loudness, measured against your own mic's
+   background level so it works on any microphone; the network shapes the mouth on top (rounding, smiles,
+   lip movement). On top: blinking, eyebrows that lift
    on emphasis, head nods with speech, and a hand that waves (found with MediaPipe's hand tracker, cut out
    with a colour-keyed flood fill, and painted out of the background).
 
@@ -61,6 +63,7 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 | `src/train.js`, `src/predictor.js` | TensorFlow.js training (best-epoch selection) and streaming prediction |
 | `src/avatar-geometry.js` | Landmarks → 3D mesh, mouth hole, lip closing, jaw/lip/smile deformation, blinks, brows |
 | `src/avatar-hand.js` | Hand cut-out (flood fill) and background inpainting |
+| `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
 | `src/avatar.js` | Puts it all together in Three.js |
 | `src/main.js`, `src/face.js` | Page scripts for `audio.html` (live audio visualisations) and `face.html` (face tracking) |
 
@@ -72,10 +75,15 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
   lets a model look great by memorising. I hold out the last 15% of every take instead.
 - **The mic is part of the model.** A model trained on my laptop mic scored ~0 on another mic. Mean and
   variance normalisation didn't fix it (I tested both). More mics in the training data is the real fix.
+- **Test with someone else.** The first person to try the live demo saw the mouth not move at all. On their mic
+  the network's jaw predictions were tiny (trained on ~3 minutes of data, it plays safe and predicts values close
+  to the average). Now the jaw follows loudness, which works on any mic, and the network adds the mouth shapes.
+  The page also shows a mic meter and says when it can't hear you.
 
 ## Limitations
 
-- Works best with the mic it was trained on (my laptop's). On other mics the mouth moves less accurately.
+- The mouth shapes (rounding, smiles) are most accurate on the mic the network was trained on (my laptop's).
+  On other mics the jaw still follows your voice, but the finer shapes are rougher.
 - One front-facing picture contains only the front of the face, so only the face turns; the hand waves as a flat
   cut-out and its fingers don't bend.
 
