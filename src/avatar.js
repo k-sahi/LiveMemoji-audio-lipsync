@@ -17,6 +17,7 @@ import { Predictor, MODEL_KEY, MODEL_URL } from './predictor.js';
 import { startMicFrames } from './audio.js';
 import { createFeatureExtractor } from './features.js';
 import { createVoiceEnvelope } from './voice-envelope.js';
+import { createFormantTracker, vowelShape } from './formants.js';
 
 const tf = window.tf;
 const $ = (id) => document.getElementById(id);
@@ -55,6 +56,8 @@ let predictor = null;
 let values = null;
 const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false, heardAt: 0, startedAt: 0 };
 const envelope = createVoiceEnvelope();
+let formants = null;
+const vowel = { open: 0, round: 0, spread: 0, voiced: false }; // smoothed mouth shape from formants
 const gain = () => Number($('gain').value);
 
 // ---- 1. build the avatar from a picture ---------------------------------------------
@@ -221,6 +224,7 @@ $('micBtn').addEventListener('click', async (e) => {
         if (!features) return;
         const { mfcc, rms } = features.compute(samples);
         envelope.update(rms);
+        updateVowel(formants.analyze(samples));
         if (envelope.value > 0.15) voice.heardAt = performance.now();
         const level = Math.min(1, Math.sqrt(rms) * 4);
         voice.level = 0.8 * voice.level + 0.2 * level;
@@ -234,6 +238,7 @@ $('micBtn').addEventListener('click', async (e) => {
       },
     });
     features = createFeatureExtractor({ sampleRate: mic.sampleRate, fftSize: 1024 });
+    formants = createFormantTracker(mic.sampleRate);
     e.target.textContent = '🎙 Listening';
     voice.startedAt = performance.now();
     $('micInfo').textContent = `🎙 ${mic.micLabel}: talk and watch the mouth follow you`;
@@ -246,6 +251,18 @@ $('micBtn').addEventListener('click', async (e) => {
     e.target.disabled = false;
   }
 });
+
+// Mouth shape from the voice's resonances (see formants.js). Voiced sounds get
+// their vowel shape; hiss like "s"/"f"/"sh" gets a narrow, slightly spread mouth.
+function updateVowel(f) {
+  const env = envelope.value;
+  let target;
+  if (f && env > 0.05) target = { ...vowelShape(f), voiced: true };
+  else if (env > 0.15) target = { open: 0, round: 0, spread: 0.35, voiced: false };
+  else target = { open: vowel.open, round: 0, spread: 0, voiced: false };
+  for (const k of ['open', 'round', 'spread']) vowel[k] += (target[k] - vowel[k]) * 0.35;
+  vowel.voiced = target.voiced;
+}
 
 // Speech detection, used to start a wave when you begin talking after a pause.
 function onVoiceLevel(level) {
@@ -266,9 +283,9 @@ const anim = { talk: 0, blinkStart: -1, nextBlink: performance.now() + 1500, dou
 function blinkAmount(now) {
   if (anim.blinkStart < 0 && now >= anim.nextBlink) { anim.blinkStart = now; anim.double = Math.random() < 0.2; }
   if (anim.blinkStart < 0) return 0;
-  const t = now - anim.blinkStart;          // close 70 ms, hold 40 ms, open 120 ms
-  let b = t < 70 ? t / 70 : t < 110 ? 1 : t < 230 ? 1 - (t - 110) / 120 : 0;
-  if (t >= 230) {
+  const t = now - anim.blinkStart;          // close 55 ms, hold 30 ms, open 95 ms (real blinks take ~150–200 ms)
+  let b = t < 55 ? t / 55 : t < 85 ? 1 : t < 180 ? 1 - (t - 85) / 95 : 0;
+  if (t >= 180) {
     if (anim.double) { anim.double = false; anim.blinkStart = now + 90; }
     else { anim.blinkStart = -1; anim.nextBlink = now + 2200 + Math.random() * 3800; }
     b = 0;
@@ -306,11 +323,17 @@ function blendshape(name) {
   const env = envelope.value;
   const i = values ? names().indexOf(name) : -1;
   const model = i < 0 ? 0 : values[i] * gain();
-  const speaking = Math.min(1, env * 4);                 // 0 in silence, 1 while talking
-  const open = 0.9 * Math.pow(env, 0.75);                // cartoon-style: clearly open on normal speech
-  if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking, open));
-  if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking, 0.45 * open));
+  const speaking = Math.min(1, env / 0.12);              // 0 in silence, 1 once clearly talking
+  // How far it opens: loudness × how open the vowel is ("ah" wide, "ee"/"oo" small).
+  const open = Math.pow(env, 0.75) * (0.22 + 0.65 * vowel.open);
+  const round = vowel.round * speaking, spread = vowel.spread * speaking;
+  if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking * 0.5, open));
+  if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking * 0.5, 0.45 * open));
   if (name === 'mouthUpperUpLeft' || name === 'mouthUpperUpRight') return Math.min(1, Math.max(model * speaking, 0.3 * open));
+  if (name === 'mouthFunnel') return Math.min(1, Math.max(model * speaking, 0.9 * round));
+  if (name === 'mouthPucker') return Math.min(1, Math.max(model * speaking, 0.6 * round));
+  if (name === 'mouthStretchLeft' || name === 'mouthStretchRight') return Math.min(1, Math.max(model * speaking, 0.7 * spread));
+  if (name === 'mouthSmileLeft' || name === 'mouthSmileRight') return Math.min(1, Math.max(model * speaking, 0.3 * spread));
   return Math.min(1, model * (0.25 + 0.75 * speaking));
 }
 
@@ -375,7 +398,7 @@ function frame(t) {
   }
 
   if (values && $('showDebug').checked) {
-    debugRows.textContent = ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthLowerDownLeft', 'mouthUpperUpLeft']
+    debugRows.textContent = `vowel: open ${vowel.open.toFixed(2)}  round ${vowel.round.toFixed(2)}  spread ${vowel.spread.toFixed(2)}\n` + ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthLowerDownLeft', 'mouthUpperUpLeft']
       .map((n) => `${n.padEnd(19)} ${'█'.repeat(Math.round(blendshape(n) * 20)).padEnd(20, '·')} ${blendshape(n).toFixed(2)}`)
       .join('\n');
   } else if (!$('showDebug').checked) {

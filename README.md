@@ -33,9 +33,10 @@
    On speech it never saw, it scores **0.59** (R², where 0 = guessing the average and 1 = perfect).
 4. **Animating.** MediaPipe finds 478 3D points on my Memoji picture. I connect them into a mesh
    (Delaunay triangulation) with a hole for the mouth, close the picture's smiling lips into a resting pose,
-   and move the vertices in **Three.js**. The jaw opens with your loudness, measured against your own mic's
-   background level so it works on any microphone; the network shapes the mouth on top (rounding, smiles,
-   lip movement). On top: blinking, eyebrows that lift
+   and move the vertices in **Three.js**. The mouth shape comes from the voice's **formants** (the resonances
+   of your mouth, found with LPC): a high F1 opens it ("ah"), a low F2 rounds it ("oo"), a high F2 spreads it ("ee").
+   How far it opens follows your loudness against your own mic's background level, so it works on any
+   microphone, and the network adds detail on top. On top: blinking, eyebrows that lift
    on emphasis, head nods with speech, and a hand that waves (found with MediaPipe's hand tracker, cut out
    with a colour-keyed flood fill, and painted out of the background).
 
@@ -63,6 +64,7 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 | `src/train.js`, `src/predictor.js` | TensorFlow.js training (best-epoch selection) and streaming prediction |
 | `src/avatar-geometry.js` | Landmarks → 3D mesh, mouth hole, lip closing, jaw/lip/smile deformation, blinks, brows |
 | `src/avatar-hand.js` | Hand cut-out (flood fill) and background inpainting |
+| `src/formants.js` | LPC formant tracking (F1/F2) → open / round / spread mouth shapes, on any mic |
 | `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
 | `src/avatar.js` | Puts it all together in Three.js |
 | `src/main.js`, `src/face.js` | Page scripts for `audio.html` (live audio visualisations) and `face.html` (face tracking) |

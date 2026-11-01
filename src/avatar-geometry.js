@@ -262,10 +262,10 @@ export function deform(face, g, out, { blink = 0, brow = 0 } = {}) {
     y -= jawDrop * w.jaw[i] + lowerDown * 0.03 * H * w.lower[i];
     z -= open * 0.03 * H * w.jaw[i];
     y += upperUp * 0.025 * H * w.upper[i];
-    x -= (x - C.x) * 0.35 * round * w.round[i];
+    x -= (x - C.x) * 0.45 * round * w.round[i];
     z += 0.035 * H * round * w.round[i];
     // Corners: stretch outward; smiles also lift. (Left = the person's left = picture's right.)
-    x += (wideL * w.cornerL[i] - wideR * w.cornerR[i]) * 0.22 * Wm * (info.cornerL[0] > C.x ? 1 : -1);
+    x += (wideL * w.cornerL[i] - wideR * w.cornerR[i]) * 0.3 * Wm * (info.cornerL[0] > C.x ? 1 : -1);
     y += (smileL * w.cornerL[i] + smileR * w.cornerR[i]) * 0.07 * Wm;
     out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z;
   }
