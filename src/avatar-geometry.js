@@ -256,7 +256,7 @@ export function deform(face, g, out, { blink = 0, brow = 0 } = {}) {
   const smileL = clamp(g('mouthSmileLeft')), smileR = clamp(g('mouthSmileRight'));
   const wideL = clamp(smileL + 0.6 * g('mouthStretchLeft')), wideR = clamp(smileR + 0.6 * g('mouthStretchRight'));
 
-  const jawDrop = open * 0.13 * H;
+  const jawDrop = open * 0.15 * H;
   for (let i = 0; i < count; i++) {
     let x = rest[i * 3], y = rest[i * 3 + 1], z = rest[i * 3 + 2];
     y -= jawDrop * w.jaw[i] + lowerDown * 0.03 * H * w.lower[i];

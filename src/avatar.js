@@ -29,7 +29,7 @@ renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 const scene = new THREE.Scene();
 // Orthographic camera: no perspective, so at rest every pixel lines up exactly
 // with the original picture. Turning the face still reveals its 3D shape.
-const VIEW_HEIGHT = 1.06;
+const VIEW_HEIGHT = 0.94; // slightly smaller than the picture (1.0), so its edges stay out of view while it moves
 const camera = new THREE.OrthographicCamera(-0.5, 0.5, VIEW_HEIGHT / 2, -VIEW_HEIGHT / 2, -10, 10);
 camera.position.set(0, 0, 2);
 const root = new THREE.Group();
@@ -250,7 +250,7 @@ $('micBtn').addEventListener('click', async (e) => {
 // Speech detection, used to start a wave when you begin talking after a pause.
 function onVoiceLevel(level) {
   const now = performance.now();
-  const loud = level > Math.max(0.12, voice.slow * 1.8);
+  const loud = envelope.value > 0.15; // relative to this mic's own background level, so it works on quiet mics too
   if (loud) {
     if (!voice.talking && now - voice.lastLoudAt > 2500 && $('autoWave').checked) startWave(1.6);
     voice.talking = true;
@@ -261,7 +261,7 @@ function onVoiceLevel(level) {
 }
 
 // ---- 3. life: blinks, brows, head motion, waving -----------------------------------------
-const anim = { blinkStart: -1, nextBlink: performance.now() + 1500, double: false, brow: 0, waveStart: -1, waveLen: 0 };
+const anim = { talk: 0, blinkStart: -1, nextBlink: performance.now() + 1500, double: false, brow: 0, waveStart: -1, waveLen: 0 };
 
 function blinkAmount(now) {
   if (anim.blinkStart < 0 && now >= anim.nextBlink) { anim.blinkStart = now; anim.double = Math.random() < 0.2; }
@@ -284,7 +284,8 @@ function startWave(seconds) {
 $('waveBtn').addEventListener('click', () => startWave(2.4));
 
 function waveAngle(now) {
-  const idle = 0.035 * Math.sin(now / 900);
+  // Resting sway, plus gestures that follow your speech rhythm while you talk.
+  const idle = 0.05 * Math.sin(now / 900) + anim.talk * (0.1 * Math.sin(now / 260) + 0.12 * envelope.value);
   if (anim.waveStart < 0) return idle;
   const t = now - anim.waveStart;
   if (t > anim.waveLen) { anim.waveStart = -1; return idle; }
@@ -306,8 +307,10 @@ function blendshape(name) {
   const i = values ? names().indexOf(name) : -1;
   const model = i < 0 ? 0 : values[i] * gain();
   const speaking = Math.min(1, env * 4);                 // 0 in silence, 1 while talking
-  if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking, 0.7 * env));
-  if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking, 0.3 * env));
+  const open = 0.9 * Math.pow(env, 0.75);                // cartoon-style: clearly open on normal speech
+  if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking, open));
+  if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking, 0.45 * open));
+  if (name === 'mouthUpperUpLeft' || name === 'mouthUpperUpRight') return Math.min(1, Math.max(model * speaking, 0.3 * open));
   return Math.min(1, model * (0.25 + 0.75 * speaking));
 }
 
@@ -343,9 +346,18 @@ function frame(t) {
     // Head: slow idle drift + small nods that follow the rhythm of speech.
     const s = t / 1000;
     const idle = alive ? 1 : 0;
-    faceRoot.rotation.y = yaw + idle * (0.05 * Math.sin(s * 0.43) + 0.02 * Math.sin(s * 1.3));
-    faceRoot.rotation.x = pitch + idle * (0.025 * Math.sin(s * 0.31) - 0.07 * emphasis - 0.02 * voice.level);
-    faceRoot.rotation.z = idle * 0.02 * Math.sin(s * 0.27);
+    // Talking energy: rises while you speak, fades ~1 s after you stop.
+    anim.talk += ((voice.talking ? 1 : 0) - anim.talk) * 0.05;
+    const env = envelope.value;
+    faceRoot.rotation.y = yaw + idle * (0.06 * Math.sin(s * 0.43) + 0.03 * Math.sin(s * 1.3) + 0.05 * anim.talk * Math.sin(s * 2.1));
+    faceRoot.rotation.x = pitch + idle * (0.025 * Math.sin(s * 0.31) - 0.08 * emphasis - 0.06 * env);
+    faceRoot.rotation.z = idle * (0.02 * Math.sin(s * 0.27) + 0.03 * anim.talk * Math.sin(s * 1.7));
+
+    // Whole avatar (hair, body, hand): a gentle sway and a small bounce on syllables,
+    // like a Memoji being animated. The view is zoomed in, so the edges stay hidden.
+    root.rotation.z = idle * (0.012 * Math.sin(s * 0.5) + 0.018 * anim.talk * Math.sin(s * 1.9));
+    root.position.y = idle * (0.004 * Math.sin(s * 0.8) - 0.012 * env);
+    root.position.x = idle * 0.006 * anim.talk * Math.sin(s * 1.1);
 
     if (handRoot) handRoot.rotation.z = alive || anim.waveStart >= 0 ? waveAngle(now) : 0;
   }
