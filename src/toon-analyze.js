@@ -124,11 +124,21 @@ export function analyzeFace(img, landmarks) {
   const bridge = darkFrac(region(F[168][0] - 0.1, F[168][0] + 0.1, F[168][1] - 0.1, F[168][1] + 0.1, 0.02));
   const glasses = (below > 0.07 && bridge > 0.05) || below > 0.16;
 
-  // ---- facial hair: dark pixels between the nose and the upper lip
-  const upperLipArea = region(F[61][0] * 0.6, F[291][0] * 0.6, F[2][1] + 0.05, F[0][1] - 0.04, 0.025);
-  const mustache = darkFrac(upperLipArea, 0.7) > 0.3;
-  const chinArea = region(F[61][0] * 0.7, F[291][0] * 0.7, F[17][1] + 0.08, F[152][1] - 0.05, 0.025);
-  const beard = darkFrac(chinArea, 0.7) > 0.35;
+  // ---- facial hair. Easy to fake: the shadow under the nose, a hand near the chin, a dim room.
+  // So it must be clearly darker than the cheeks, look like this person's hair or brows,
+  // and appear on BOTH sides of the face (a shadow or a hand is usually one-sided).
+  const cheekLum = median([...patch(F[205][0], F[205][1], 0.07), ...patch(F[425][0], F[425][1], 0.07)].map((c) => [lum(c), 0, 0]))[0];
+  const hairy = (c) => lum(c) < cheekLum * 0.55 && (dist(c, hairCol) < 70 || dist(c, brows) < 60) && dist(c, skin) > 60;
+  const frac = (arr, fn) => arr.filter(fn).length / Math.max(1, arr.length);
+  const halves = (x0, x1, y0, y1) => [frac(region(x0, 0, y0, y1, 0.025), hairy), frac(region(0, x1, y0, y1, 0.025), hairy)];
+  const [mL, mR] = halves(F[61][0] * 0.6, F[291][0] * 0.6, F[2][1] + 0.05, F[0][1] - 0.04);
+  const mustache = Math.min(mL, mR) > 0.45;
+  const [bL, bR] = halves(F[61][0] * 0.9, F[291][0] * 0.9, F[17][1] + 0.08, F[152][1] - 0.05);
+  const beard = Math.min(bL, bR) > 0.45;
+  // Stubble: the lower face is evenly a bit darker than the cheeks (both sides).
+  const lowL = median(region(F[61][0] * 0.9, F[61][0] * 0.3, F[17][1] + 0.08, F[152][1] - 0.08).map((c) => [lum(c), 0, 0]))[0];
+  const lowR = median(region(F[291][0] * 0.3, F[291][0] * 0.9, F[17][1] + 0.08, F[152][1] - 0.08).map((c) => [lum(c), 0, 0]))[0];
+  const stubble = !beard && Math.max(lowL, lowR) < cheekLum * 0.72 && Math.abs(lowL - lowR) < cheekLum * 0.12;
 
   // ---- clothes: under the chin
   const shirtArea = region(-halfW * 0.6, halfW * 0.6, chinY + faceH * 0.2, chinY + faceH * 0.4, 0.05)
@@ -156,6 +166,6 @@ export function analyzeFace(img, landmarks) {
     },
     mouth: { inner: LIPS_INNER.map(rel), outer: LIPS_OUTER.map(rel), innerIdx: LIPS_INNER, outerIdx: LIPS_OUTER },
     hair: { style: hairStyle, volumeTop, volumeSide, curliness, longFrac, coverage: hairFracTop },
-    accessories: { glasses, mustache, beard, glassesScore: { below, bridge } },
+    accessories: { glasses, mustache, beard, stubble, glassesScore: { below, bridge }, facialScore: { mL, mR, bL, bR, lowL, lowR, cheekLum } },
   };
 }

@@ -14,7 +14,7 @@ import { createLandmarker, createHandLandmarker } from './facemodel.js';
 import { buildFace, deform, attachVisemes, turnFace } from './avatar-geometry.js';
 import { faceFrame } from './visemes.js';
 import { analyzeFace } from './toon-analyze.js';
-import { ToonHead, suggestLook } from './toon-head.js';
+import { ToonHead, suggestLook, suggestFacialHair } from './toon-head.js';
 import { liftHand } from './avatar-hand.js';
 import { Predictor, MODEL_KEY, MODEL_URL } from './predictor.js';
 import { startMicFrames } from './audio.js';
@@ -271,6 +271,7 @@ async function loadToon(src) {
   root.add(bg);
   // Show what was detected; people can correct any of it.
   $('toonLook').value = suggestLook(toonTraits);
+  $('facialHair').value = suggestFacialHair(toonTraits, $('toonLook').value);
   $('hairStyle').value = toonTraits.hair.style;
   $('toonGlasses').checked = toonTraits.accessories.glasses;
   buildToon();
@@ -278,10 +279,11 @@ async function loadToon(src) {
   $('toonControls').hidden = false;
   $('depthRow').hidden = true;
   $('sourceThumb').src = img.toDataURL('image/jpeg', 0.85);
-  const hairName = { none: 'no hair', short: 'short hair', curly: 'curly hair', long: 'long hair' }[toonTraits.hair.style];
+  const hairName = { none: 'no hair', short: 'short hair', bob: 'chin-length hair', curly: 'curly hair', long: 'long hair' }[toonTraits.hair.style];
+  const fh = $('facialHair').value;
   status.textContent = (notes.length ? notes.join(' ') + ' ' : '') +
-    `cartoon ready: ${hairName}${toonTraits.accessories.glasses ? ', glasses' : ''}${toonTraits.accessories.mustache ? ', mustache' : ''}` +
-    (visemeFile ? ', mouth moves with captured real-mouth motion' : '') + '. Wrong guess? Change it below the picture.';
+    `cartoon ready: ${$('toonLook').value} style, ${hairName}${toonTraits.accessories.glasses ? ', glasses' : ''}${fh !== 'none' ? ', ' + fh : ''}` +
+    (visemeFile ? ', mouth moves with captured real-mouth motion' : '') + '. Wrong guess? Change it in the panel.';
 }
 
 function gradientTexture() {
@@ -299,11 +301,18 @@ function buildToon() {
   toon = new ToonHead(toonTraits, visemeFile, { look: $('toonLook').value });
   toon.setHairStyle($('hairStyle').value);
   toon.setGlasses($('toonGlasses').checked);
+  toon.setFacialHair($('facialHair').value);
   toon.group.scale.setScalar(0.2);
   toon.group.position.y = 0.075;
   root.add(toon.group);
 }
-$('toonLook').addEventListener('change', () => { if (toonTraits && toon) buildToon(); });
+$('toonLook').addEventListener('change', () => {
+  if (!toonTraits || !toon) return;
+  // Switching style also switches facial hair to that style's default (unless the photo clearly shows some).
+  $('facialHair').value = suggestFacialHair(toonTraits, $('toonLook').value);
+  buildToon();
+});
+$('facialHair').addEventListener('change', (e) => toon?.setFacialHair(e.target.value));
 $('hairStyle').addEventListener('change', (e) => toon?.setHairStyle(e.target.value));
 $('toonGlasses').addEventListener('change', (e) => toon?.setGlasses(e.target.checked));
 $('cartoonMode').addEventListener('change', () => { if (currentSrc !== DEFAULT_PICTURE) useOwnPicture(currentSrc); });

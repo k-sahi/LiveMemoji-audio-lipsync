@@ -26,23 +26,69 @@ function cartoonColor(rgb, { lift = 1.08, sat = 1.12 } = {}) {
 }
 
 // Style presets: what makes a cartoon read as feminine, masculine or neutral.
-// (Chosen by the person, never guessed from their face shape.)
+// (Chosen by the person; the photo only offers a first suggestion.)
 export const LOOKS = {
-  feminine: { eye: 1.1, lash: 1.7, flick: true, brow: 0.7, arch: 1.5, lipFull: 1.3, lipTint: [214, 92, 120], lipMix: 0.35, nose: 0.85, taper: 0.08, jawPow: 1.2, blush: 0.32, neck: 0.85 },
-  masculine: { eye: 0.94, lash: 0.8, flick: false, brow: 1.4, arch: 0.45, lipFull: 0.9, lipTint: null, lipMix: 0.35, nose: 1.15, taper: -0.1, jawPow: 2.6, blush: 0, neck: 1.18 },
-  neutral: { eye: 1, lash: 1.1, flick: false, brow: 1, arch: 1, lipFull: 1.05, lipTint: null, lipMix: 0.1, nose: 1, taper: 0, jawPow: 1.6, blush: 0.12, neck: 1 },
+  feminine: {
+    eye: 1.1, lash: 1.9, flicks: 4, lid: -0.06, brow: 0.6, browThin: true, arch: 1.8, browLift: 0.03,
+    upperLip: 1.4, lowerLip: 1.55, bow: 1, mouthW: 0.92, lipTint: [208, 66, 104], lipMix: 0.5, gloss: true,
+    nose: 0.75, taper: 0.14, jawPow: 1.1, jawAngle: 0, chin: -0.02, cheekbone: 0.08, browRidge: 0,
+    blush: 0.38, neck: 0.8, shoulders: 1.55, adamsApple: false, facialHair: 'none',
+  },
+  masculine: {
+    eye: 0.88, lash: 0.6, flicks: 0, lid: 0.12, brow: 1.6, browThin: false, arch: 0.25, browLift: -0.035,
+    upperLip: 0.55, lowerLip: 0.9, bow: 0, mouthW: 1.12, lipTint: null, lipMix: 0.6, gloss: false,
+    nose: 1.3, taper: -0.16, jawPow: 3.4, jawAngle: 0.08, chin: 0.08, cheekbone: 0.02, browRidge: 0.04,
+    blush: 0, neck: 1.28, shoulders: 2.1, adamsApple: true, facialHair: 'stubble',
+  },
+  neutral: {
+    eye: 1, lash: 1.1, flicks: 0, lid: 0, brow: 1, browThin: true, arch: 1, browLift: 0,
+    upperLip: 1, lowerLip: 1.1, bow: 0.4, mouthW: 1, lipTint: null, lipMix: 0.15, gloss: false,
+    nose: 1, taper: 0, jawPow: 1.6, jawAngle: 0.02, chin: 0.02, cheekbone: 0.05, browRidge: 0.01,
+    blush: 0.12, neck: 1, shoulders: 1.8, adamsApple: false, facialHair: 'none',
+  },
 };
 
-/** A first suggestion from things visible in the photo (facial hair, long hair). Always editable. */
+/**
+ * A first suggestion from the photo. Deliberately cautious: only a clear, full beard
+ * suggests masculine (a mustache-like shadow alone is too often wrong); long hair suggests
+ * feminine; everything else starts neutral. Always editable.
+ */
 export function suggestLook(traits) {
-  if (traits.accessories.mustache || traits.accessories.beard) return 'masculine';
-  if (traits.hair.style === 'long') return 'feminine';
+  const a = traits.accessories;
+  if (a.beard && a.mustache) return 'masculine';
+  if (traits.hair.style === 'long' || traits.hair.style === 'bob') return 'feminine';
   return 'neutral';
 }
 
+/** Facial hair to start with: what the photo clearly shows, otherwise the style's default. */
+export function suggestFacialHair(traits, look) {
+  const a = traits.accessories;
+  // Shadows and hands can look like facial hair, so a single cue only counts for the masculine style.
+  if (a.beard && a.mustache) return look === 'feminine' ? 'none' : 'beard';
+  if (look === 'masculine' && a.beard) return 'goatee';
+  if (look === 'masculine' && a.mustache) return 'mustache';
+  return LOOKS[look]?.facialHair ?? 'none';
+}
+
 // Caricature: push each measurement away from the average, like a caricature artist.
-const EXAGGERATE = 1.6;
+const EXAGGERATE = 2.2;
 const caricature = (value, avg, min, max) => Math.min(max, Math.max(min, 1 + (value / avg - 1) * EXAGGERATE));
+
+/** A tube whose thickness follows fn(t), t = 0..1 along the curve (brows, mustaches, lashes, locks). */
+function taperTube(curve, segs, radius, radial, fn, flat = 1) {
+  const g = new THREE.TubeGeometry(curve, segs, radius, radial, false);
+  const p = g.attributes.position;
+  for (let i = 0; i <= segs; i++) {
+    const c = curve.getPointAt(i / segs), k = Math.max(0.05, fn(i / segs));
+    for (let j = 0; j <= radial; j++) {
+      const n = i * (radial + 1) + j;
+      p.setXYZ(n, c.x + (p.getX(n) - c.x) * k, c.y + (p.getY(n) - c.y) * k, c.z + (p.getZ(n) - c.z) * k * flat);
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+const bell = (lo, hi) => (t) => lo + (hi - lo) * Math.sin(Math.PI * t);
 
 export class ToonHead {
   /**
@@ -65,11 +111,11 @@ export class ToonHead {
     const f = traits.face;
     // Shape of the head, from the photo's proportions (typical values in comments).
     // Typical values (in eye-distance units) are the "average face"; differences get exaggerated.
-    this.wx = caricature(f.cheekWidth / Math.max(1, f.height), 0.77, 0.86, 1.18);             // face width / height
-    this.eyeSpread = caricature(2.25 / Math.max(1, f.cheekWidth), 1, 0.86, 1.16);             // eyes far apart vs close
-    this.eyeScale = caricature(f.eyeWidth, 0.5, 0.82, 1.28) * L.eye;                           // eye size
-    this.noseScale = caricature(f.noseWidth, 0.5, 0.75, 1.4) * L.nose;                         // nose width
-    this.mouthScale = Math.min(1.25, Math.max(0.8, 1 + (f.mouthWidth / 0.85 - 1) * 1.0));     // mouth width
+    this.wx = caricature(f.cheekWidth / Math.max(1, f.height), 0.77, 0.82, 1.24);             // face width / height
+    this.eyeSpread = caricature(2.25 / Math.max(1, f.cheekWidth), 1, 0.84, 1.18);             // eyes far apart vs close
+    this.eyeScale = caricature(f.eyeWidth, 0.5, 0.78, 1.32) * L.eye;                           // eye size
+    this.noseScale = caricature(f.noseWidth, 0.5, 0.7, 1.55) * L.nose;                         // nose width
+    this.mouthScale = caricature(f.mouthWidth, 0.85, 0.78, 1.3) * L.mouthW;                    // mouth width
     this.jawPow = L.jawPow;
     this.hy = 1.16;
     this.dz = 1.0;
@@ -83,7 +129,7 @@ export class ToonHead {
       skinDark: new THREE.MeshStandardMaterial({ color: this.skin.clone().multiplyScalar(0.93), roughness: 0.55 }),
       hair: new THREE.MeshStandardMaterial({ color: this.hairColor, roughness: 0.75 }),
       brow: new THREE.MeshStandardMaterial({ color: cartoonColor(traits.colors.brows, { lift: 1.05 }), roughness: 0.8 }),
-      lips: new THREE.MeshStandardMaterial({ color: lipColor(traits, L), roughness: 0.45, side: THREE.DoubleSide }),
+      lips: new THREE.MeshStandardMaterial({ color: lipColor(traits, L), roughness: L.gloss ? 0.22 : 0.6, side: THREE.DoubleSide }),
       mouth: new THREE.MeshBasicMaterial({ color: 0x3a0d16, side: THREE.DoubleSide }),
       teeth: new THREE.MeshStandardMaterial({ color: 0xf6f3ec, roughness: 0.35, side: THREE.DoubleSide }),
       tongue: new THREE.MeshStandardMaterial({ color: 0xc0505f, roughness: 0.5, side: THREE.DoubleSide }),
@@ -104,7 +150,7 @@ export class ToonHead {
     this.setupMouth(visemeFile);
     this.setHairStyle(traits.hair.style);
     this.setGlasses(traits.accessories.glasses);
-    this.setMustache(traits.accessories.mustache);
+    this.setFacialHair(suggestFacialHair(traits, look));
   }
 
   // ---- geometry helpers ------------------------------------------------------------------
@@ -124,15 +170,21 @@ export class ToonHead {
   }
 
   buildHead() {
-    const g = new THREE.SphereGeometry(1, 72, 54);
+    const g = new THREE.SphereGeometry(1, 128, 96); // fine enough for smooth beard edges
     const p = g.attributes.position;
     for (let i = 0; i < p.count; i++) {
       let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
       const yy = y * this.hy;
       x *= this.halfWidthAt(yy);
       // soft cheeks and a slightly flatter back of the head
-      const cheek = 0.05 * (Math.exp(-((x - 0.55) ** 2 + (yy + 0.25) ** 2) / 0.06) + Math.exp(-((x + 0.55) ** 2 + (yy + 0.25) ** 2) / 0.06));
-      z = z * this.dz * (z < 0 ? 0.92 : 1) + (z > 0 ? cheek : 0);
+      const L = this.look;
+      const cy = L.cheekbone > 0.06 ? -0.12 : -0.25;   // feminine: higher, rounder cheekbones
+      const cheek = L.cheekbone * (Math.exp(-((x - 0.55) ** 2 + (yy - cy) ** 2) / 0.06) + Math.exp(-((x + 0.55) ** 2 + (yy - cy) ** 2) / 0.06));
+      // jaw corners pushed out (square jaw), chin pushed forward, brow ridge
+      x *= 1 + L.jawAngle * Math.exp(-((yy + 0.72) ** 2) / 0.025) * (z > -0.2 ? 1 : 0.5);
+      const chin = L.chin * Math.exp(-(x * x) / 0.09 - ((yy + 1.0) ** 2) / 0.03);
+      const ridge = L.browRidge * Math.exp(-((yy - EYE_Y - 0.3) ** 2) / 0.006) * Math.exp(-(x * x) / 0.5);
+      z = z * this.dz * (z < 0 ? 0.92 : 1) + (z > 0 ? cheek + chin + ridge : 0);
       p.setXYZ(i, x, yy, z);
     }
     g.computeVertexNormals();
@@ -147,10 +199,16 @@ export class ToonHead {
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.4 * nk, 0.48 * nk, 0.9, 32), this.mat.skinDark);
     neck.position.set(0, -1.35, -0.08);
     const torso = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), this.mat.shirt);
-    torso.scale.set(1.85, 0.85, 1.05);
+    torso.scale.set(this.look.shoulders, 0.85, 1.05);
     torso.position.set(0, -2.25, -0.15);
     this.torso = torso;
     this.group.add(neck, torso);
+    if (this.look.adamsApple) {
+      const bump = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), this.mat.skinDark);
+      bump.scale.set(1, 1.3, 0.8);
+      bump.position.set(0, -1.32, -0.08 + 0.4 * nk);
+      this.group.add(bump);
+    }
   }
 
   buildEyes() {
@@ -181,15 +239,15 @@ export class ToonHead {
       const lash = new THREE.Mesh(new THREE.TorusGeometry(r * 1.07, r * 0.07 * L.lash, 8, 40, Math.PI), this.mat.lash);
       lash.rotation.x = Math.PI / 2;
       lid.add(lash);
-      if (L.flick) {
-        // Little lash flicks at the outer corner (they ride on the lid, so they blink too).
-        for (const [a, len] of [[0.25, 0.32], [0.45, 0.3], [0.65, 0.24]]) {
+      if (L.flicks) {
+        // Lash flicks at the outer corner (they ride on the lid, so they blink too).
+        for (const [a, len] of [[0.12, 0.42], [0.3, 0.4], [0.48, 0.34], [0.66, 0.26]].slice(0, L.flicks)) {
           const ang = side > 0 ? a : Math.PI - a;          // outer side of each eye
           const base = new THREE.Vector3(Math.cos(ang) * r * 1.07, 0, Math.sin(ang) * r * 1.07);
           const dir = new THREE.Vector3(Math.cos(ang) * 0.8, 0.35, Math.sin(ang) * 0.5).normalize().multiplyScalar(r * len);
           const tip = base.clone().add(dir);
           const mid = base.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, r * 0.06, 0));
-          lid.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(base, mid, tip), 8, r * 0.035, 6, false), this.mat.lash));
+          lid.add(new THREE.Mesh(taperTube(new THREE.QuadraticBezierCurve3(base, mid, tip), 8, r * 0.05, 6, (t) => 1 - 0.85 * t), this.mat.lash));
         }
       }
       // Lower lid: a thin shell covering the bottom of the eye.
@@ -200,20 +258,24 @@ export class ToonHead {
       this.eyes.push({ root, look, lid });
     }
     const ratio = f.eyeOpen / Math.max(0.2, f.eyeWidth); // ≈ 0.3 typical
-    this.lidRest = -(0.6 + Math.max(-0.12, Math.min(0.15, (ratio - 0.3) * 1.2)));
+    this.lidRest = -(0.6 + Math.max(-0.12, Math.min(0.15, (ratio - 0.3) * 1.2))) + L.lid;
   }
 
   buildBrowsNoseEars() {
     const f = this.t.face, r = this.eyeR;
     this.brows = [];
-    const browY = EYE_Y + r * 1.2 + Math.max(0.02, Math.min(0.12, (-(f.browY) - 0.3) * this.k * 0.6));
+    const browY = EYE_Y + r * 1.2 + Math.max(0.02, Math.min(0.12, (-(f.browY) - 0.3) * this.k * 0.6)) + this.look.browLift;
     for (const side of [-1, 1]) {
       const ex = side * 0.5 * this.k * this.eyeSpread, L = this.look;
-      const pts = [[ex - side * r * 0.95, browY - 0.01], [ex + side * r * 0.1, browY + 0.07 * L.arch], [ex + side * r * 1.05, browY - 0.03 * L.arch]]
-        .map(([x, y]) => new THREE.Vector3(x, y, this.surfaceZ(x, y) + 0.025));
-      const geo = new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(...pts), 20, 0.034 * this.look.brow, 8, false);
-      const brow = new THREE.Mesh(geo, this.mat.brow);
-      const g = new THREE.Group(); g.add(brow);
+      // inner end → peak → tail. Feminine: high arch, thin tapering tail. Masculine: low, straight, heavy.
+      const pts = [[ex - side * r * 0.95, browY - 0.01], [ex + side * r * 0.25, browY + 0.07 * L.arch], [ex + side * r * 1.1, browY - 0.04 * L.arch]]
+        .map(([x, y]) => new THREE.Vector3(x, y, this.surfaceZ(x, y) + 0.03));
+      const curve = new THREE.QuadraticBezierCurve3(...pts);
+      const thick = L.browThin ? (t) => 1.15 - 0.85 * t * t : (t) => 1 - 0.15 * t;
+      const brow = new THREE.Mesh(taperTube(curve, 24, 0.034 * L.brow, 8, thick, 0.6), this.mat.brow);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.034 * L.brow * thick(0), 10, 8), this.mat.brow);
+      cap.position.copy(pts[0]); cap.scale.z = 0.6;
+      const g = new THREE.Group(); g.add(brow, cap);
       this.inner.add(g);
       this.brows.push({ g, side });
     }
@@ -260,7 +322,13 @@ export class ToonHead {
       if (gap > 0) { inner[i][1] = mid - 0.004; inner[j][1] = mid + 0.004; }
     }
     // Lip fullness: push the outer lip line away from the mouth's centre line.
-    for (const p of outer) p[1] *= this.look.lipFull;
+    const L = this.look;
+    for (const p of outer) p[1] *= p[1] < 0 ? L.upperLip : L.lowerLip;
+    if (L.bow) {
+      // Cupid's bow: the two peaks of the upper lip rise, the middle dips.
+      const h = Math.abs(outer[5][1] - inner[5][1]);
+      outer[4][1] -= 0.28 * h * L.bow; outer[6][1] -= 0.28 * h * L.bow; outer[5][1] += 0.12 * h * L.bow;
+    }
     this.neutral = { inner, outer };
     this.deltas = {};
     const idx = [...m.innerIdx, ...m.outerIdx];
@@ -376,7 +444,10 @@ export class ToonHead {
       p.setXYZ(i, x, y - drop * w, z - drop * 0.1 * w);
     }
     p.needsUpdate = true;
-    if (drop > 0 || this._jawWasOpen) this.headGeo.computeVertexNormals();
+    if (drop > 0 || this._jawWasOpen) {
+      this.headGeo.computeVertexNormals();
+      this.fitFacialHair();
+    }
     this._jawWasOpen = drop > 0;
   }
 
@@ -387,9 +458,13 @@ export class ToonHead {
     this.hair = new THREE.Group();
     this.inner.add(this.hair);
     if (style === 'none') return;
-    const h = this.t.hair;
-    const vol = 1 + 0.06 + (style === 'curly' ? 0.12 + 0.35 * Math.min(0.6, h.volumeTop) : 0.03);
-    const foreheadY = EYE_Y + this.eyeR * 1.2 + (style === 'curly' ? 0.3 : 0.22);
+    const h = this.t.hair, look = this.lookName;
+    const fem = look === 'feminine', masc = look === 'masculine';
+    const tight = style === 'buzz' ? 1.02 : style === 'bun' ? 1.035 : masc && style === 'short' ? 1.05 : 1.09;
+    const vol = style === 'curly' ? 1.18 + 0.35 * Math.min(0.6, h.volumeTop) + (fem ? 0.06 : 0) : tight;
+    const foreheadY = EYE_Y + this.eyeR * 1.2 + (style === 'curly' ? 0.3 : 0.22) + (masc ? 0.04 : 0);
+    // Masculine hairlines recede a little at the temples (an "M"); feminine ones are rounder.
+    const temple = masc ? 0.22 : fem ? 0.02 : 0.08;
     // A shell over the skull, cut along a hairline (high at the forehead, low at the back).
     const g = new THREE.SphereGeometry(1, 160, 110); // fine mesh so the hairline cut is smooth
     const p = g.attributes.position;
@@ -397,7 +472,7 @@ export class ToonHead {
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), y = p.getY(i) * this.hy, z = p.getZ(i); // y: head units
       const front = smooth(0.15, 0.85, z);                     // 1 at the face, 0 at the back
-      const line = foreheadY * front + (-0.62) * (1 - front) + 0.08 * Math.abs(x) * front;
+      const line = foreheadY * front + (style === 'buzz' || style === 'bun' ? -0.45 : -0.62) * (1 - front) + temple * Math.abs(x) * front;
       keep[i] = y > line ? 1 : 0;
       p.setXYZ(i, x * this.halfWidthAt(y) * vol, y * vol * 0.98 + (style === 'curly' ? 0.05 : 0), z * this.dz * vol * (z < 0 ? 0.95 : 1));
     }
@@ -405,11 +480,51 @@ export class ToonHead {
     for (let t = 0; t < idx.length; t += 3) if (keep[idx[t]] && keep[idx[t + 1]] && keep[idx[t + 2]]) kept.push(idx[t], idx[t + 1], idx[t + 2]);
     g.setIndex(kept);
     g.computeVertexNormals();
-    const shell = new THREE.Mesh(g, this.mat.hair);
+    const shell = new THREE.Mesh(g, style === 'buzz' ? this.mat.hair.clone() : this.mat.hair);
+    if (style === 'buzz') { shell.material.color.multiplyScalar(0.8); shell.material.roughness = 1; }
     this.hair.add(shell);
     const rand = mulberry32(7);
-    // Fringe: soft bumps along the front hairline.
-    for (let k = -4; k <= 4; k++) {
+    const onHead = (x, y, lift = 0) => new THREE.Vector3(x, y, this.surfaceZ(x, Math.min(y, this.hy * 0.98)) * vol + lift);
+    if (masc && style !== 'curly') {
+      // short sideburns in front of the ears
+      for (const side of [-1, 1]) {
+        const sb = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), this.mat.hair);
+        const x = side * this.halfWidthAt(EYE_Y - 0.05) * 0.9;
+        sb.scale.set(0.07, 0.2, 0.09);
+        sb.position.set(x, EYE_Y - 0.02, this.surfaceZ(x, EYE_Y) * 0.95);
+        this.hair.add(sb);
+      }
+    }
+    if (style === 'buzz') return;
+    if (style === 'bun') {
+      const bun = new THREE.Mesh(new THREE.SphereGeometry(0.36, 28, 20), this.mat.hair);
+      bun.position.set(0, this.hy * 1.02, -0.3);
+      this.hair.add(bun);
+      return;
+    }
+    if (fem && style !== 'curly') {
+      // Side-swept fringe: thick locks sweeping from a side parting across the forehead.
+      for (const [dy, r, sc] of [[0, 0.15, 1], [-0.07, 0.11, 0.85], [0.08, 0.12, 0.9]]) {
+        const pts = [[-0.25, foreheadY + 0.26 + dy], [0.15, foreheadY + 0.1 + dy], [0.55, foreheadY - 0.05 + dy], [0.86, foreheadY - 0.32 + dy]]
+          .map(([x, y]) => onHead(x * this.wx * sc, y, 0.02));
+        this.hair.add(new THREE.Mesh(taperTube(new THREE.CatmullRomCurve3(pts), 30, r, 12, bell(0.35, 1), 0.55), this.mat.hair));
+      }
+      // locks framing the face in front of the ears
+      const len = style === 'long' ? 0.95 : style === 'bob' ? 0.55 : 0.35;
+      for (const side of [-1, 1]) {
+        const pts = [[0.86, foreheadY - 0.1], [0.92, EYE_Y - 0.1], [0.86, EYE_Y - 0.1 - len]]
+          .map(([x, y]) => { const xx = side * x * this.halfWidthAt(Math.max(-this.hy * 0.9, y)); return new THREE.Vector3(xx, y, Math.max(0.15, this.surfaceZ(xx * 0.97, y) * 0.9)); });
+        this.hair.add(new THREE.Mesh(taperTube(new THREE.CatmullRomCurve3(pts), 24, 0.13, 10, (t) => 0.9 - 0.5 * t, 0.7), this.mat.hair));
+      }
+    } else if (masc && style !== 'curly') {
+      // Quiff: hair pushed up and back at the front.
+      for (const x of [-0.32, -0.12, 0.08, 0.28]) {
+        const xx = x * this.wx, y0 = foreheadY - 0.03 - x * x * 0.4;
+        const pts = [onHead(xx, y0, 0), onHead(xx + 0.04, y0 + 0.16, 0.1), onHead(xx + 0.09, y0 + 0.3, 0.06)];
+        this.hair.add(new THREE.Mesh(taperTube(new THREE.CatmullRomCurve3(pts), 16, 0.13, 10, (t) => 0.95 - 0.5 * t, 0.8), this.mat.hair));
+      }
+    } else for (let k = -4; k <= 4; k++) {
+      // Fringe: soft bumps along the front hairline.
       const x = k * 0.13 * this.wx, y = foreheadY + 0.03 - (k * k) * 0.006;
       const b = new THREE.Mesh(new THREE.SphereGeometry(0.17, 20, 14), this.mat.hair);
       b.scale.set(1.35, 0.7, 0.75);
@@ -420,12 +535,13 @@ export class ToonHead {
       // Lots of small curls scattered over the hair shell, in slightly varied shades.
       const shades = [0.85, 1, 1.15].map((s) => new THREE.MeshStandardMaterial({ color: this.hairColor.clone().multiplyScalar(s), roughness: 0.85 }));
       const ball = new THREE.SphereGeometry(1, 12, 10);
-      for (let n = 0; n < 170; n++) {
-        const u = rand() * Math.PI * 2, v = Math.acos(1 - rand() * 1.25);   // upper part of a sphere
+      for (let n = 0; n < (fem ? 260 : 170); n++) {
+        const u = rand() * Math.PI * 2, v = Math.acos(1 - rand() * (fem ? 1.6 : 1.25));   // upper part of a sphere
         let x = Math.sin(v) * Math.cos(u), y = Math.cos(v), z = Math.sin(v) * Math.sin(u);
         const yy = y * this.hy;
         const front = smooth(0.15, 0.85, z);
-        if (yy < (foreheadY + 0.06) * front + (-0.55) * (1 - front)) continue;
+        const low = fem ? -1.0 : -0.55;   // feminine curls fall past the jaw
+        if (yy < (foreheadY + 0.06) * front + low * (1 - front)) continue;
         const s = 0.12 + rand() * 0.1;
         const c = new THREE.Mesh(ball, shades[n % 3]);
         c.scale.setScalar(s);
@@ -448,14 +564,15 @@ export class ToonHead {
     }
     if (style === 'long') {
       for (const side of [-1, 1]) {
-        const lock = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 1.1, 8, 16), this.mat.hair);
-        lock.position.set(side * this.wx * 0.92, -0.75, -0.12);
+        const ll = masc ? 0.55 : fem ? 1.6 : 1.1;
+        const lock = new THREE.Mesh(new THREE.CapsuleGeometry(fem ? 0.32 : 0.26, ll, 8, 16), this.mat.hair);
+        lock.position.set(side * this.wx * 0.92, -0.2 - ll / 2, -0.12);
         lock.rotation.z = side * 0.08;
         this.hair.add(lock);
       }
       const back = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), this.mat.hair);
-      back.scale.set(this.wx * 1.05, 1.5, 0.6);
-      back.position.set(0, -0.55, -0.48);
+      back.scale.set(this.wx * (fem ? 1.12 : 1.05), masc ? 1.05 : fem ? 1.85 : 1.5, 0.6);
+      back.position.set(0, masc ? -0.3 : fem ? -0.75 : -0.55, -0.48);
       this.hair.add(back);
     }
   }
@@ -485,17 +602,79 @@ export class ToonHead {
     this.inner.add(gl);
   }
 
-  setMustache(on) {
-    if (this.mustache) { this.inner.remove(this.mustache); this.mustache = null; }
-    if (!on) return;
+  /**
+   * Facial hair: 'none' | 'stubble' | 'mustache' | 'goatee' | 'beard'.
+   * Beard, goatee and stubble are a layer over the face mesh (so they follow the jaw when the
+   * mouth opens), thickest in the middle of the area and fading out at its edges.
+   */
+  setFacialHair(style) {
+    for (const k of ['mustache', 'beard']) if (this[k]) { this.inner.remove(this[k]); this[k].traverse((o) => o.geometry?.dispose()); this[k] = null; }
+    this.facialHair = style;
+    if (style === 'none') return;
     const o = this.neutral.outer, s = this.mScale;
-    const at = (i, lift) => { const x = o[i][0] * s * 1.05, y = this.mouthY - o[i][1] * s + lift; return new THREE.Vector3(x, y, this.surfaceZ(x, y) + 0.03); };
-    const curve = new THREE.CatmullRomCurve3([at(0, 0.02), at(3, 0.075), at(5, 0.085), at(7, 0.075), at(10, 0.02)]);
-    const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.045, 10, false), this.mat.hair.clone());
-    m.material.depthTest = false; m.renderOrder = 16;
-    this.mustache = new THREE.Group();
-    this.mustache.add(m);
-    this.inner.add(this.mustache);
+    const hw = Math.max(...o.map((q) => Math.abs(q[0]))) * s;          // half mouth width
+    const top = this.mouthY - Math.min(...o.map((q) => q[1])) * s;     // top of the upper lip
+    const bot = this.mouthY - Math.max(...o.map((q) => q[1])) * s;     // bottom of the lower lip
+    if (style !== 'mustache') {
+      const base = this.headBase, n = base.length / 3;
+      const T = { stubble: 0.006, goatee: 0.07, beard: 0.085 }[style];
+      const under = this.noseY - 0.07;
+      const mask = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = base[i * 3], y = base[i * 3 + 1], z = base[i * 3 + 2], ax = Math.abs(x);
+        let m = smooth(-0.4, -0.1, z);
+        // top edge: under the nose in the middle, rising to the ears (sideburns) at the sides
+        const sideTop = style === 'goatee' ? under : under + (EYE_Y - 0.05 - under) * smooth(0.35 * this.wx, 0.8 * this.wx, ax);
+        m *= smooth(sideTop + 0.03, sideTop - 0.04, y);
+        if (style === 'goatee') m *= smooth(hw * 1.25, hw * 0.95, ax);
+        // keep the lips clear
+        const e = Math.hypot(x / (hw * 1.12), (y - (top + bot) / 2) / ((top - bot) / 2 + 0.035));
+        m *= smooth(0.95, 1.2, e);
+        mask[i] = m;
+      }
+      const idx = this.headGeo.index.array, kept = [];
+      for (let t = 0; t < idx.length; t += 3) if (mask[idx[t]] > 0.01 || mask[idx[t + 1]] > 0.01 || mask[idx[t + 2]] > 0.01) kept.push(idx[t], idx[t + 1], idx[t + 2]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
+      g.setIndex(kept);
+      // Edges fade out (vertex alpha) instead of ending in a hard, jagged line.
+      const rgba = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) rgba.set([1, 1, 1, smooth(0.02, 0.45, mask[i])], i * 4);
+      g.setAttribute('color', new THREE.BufferAttribute(rgba, 4));
+      // fuzzy texture: thickness varies a little from place to place
+      this.beardLift = Float32Array.from(mask, (m, i) => T * m * (style === 'stubble' ? 1 : 0.8 + 0.35 * Math.abs(Math.sin(base[i * 3] * 37 + base[i * 3 + 1] * 23))));
+      const dark = this.hairColor.clone().multiplyScalar(style === 'stubble' ? 0.6 : 1);
+      const mat = style === 'stubble'
+        ? new THREE.MeshStandardMaterial({ color: dark, roughness: 1, vertexColors: true, transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })
+        : new THREE.MeshStandardMaterial({ color: dark, roughness: 0.9, vertexColors: true, transparent: true, polygonOffset: true, polygonOffsetFactor: -1 });
+      this.beard = new THREE.Mesh(g, mat);
+      this.beard.renderOrder = style === 'stubble' ? 6 : 0;
+      this.inner.add(this.beard);
+      this.fitFacialHair();
+    }
+    if (style === 'mustache' || style === 'goatee' || style === 'beard') {
+      // A thick mustache that is fullest in the middle and tapers to points at the corners.
+      const at = (i, lift, out = 1.08) => { const x = o[i][0] * s * out, y = this.mouthY - o[i][1] * s + lift; return new THREE.Vector3(x, y, this.surfaceZ(x, y) + 0.04); };
+      const curve = new THREE.CatmullRomCurve3([at(0, -0.03, 1.2), at(2, 0.05), at(5, 0.075), at(8, 0.05), at(10, -0.03, 1.2)]);
+      const m = new THREE.Mesh(taperTube(curve, 40, 0.06, 10, bell(0.25, 1.05), 0.7), this.mat.hair.clone());
+      m.material.depthTest = false; m.renderOrder = 16;
+      this.mustache = new THREE.Group();
+      this.mustache.add(m);
+      this.inner.add(this.mustache);
+    }
+  }
+
+  /** Re-place the beard layer on the (possibly jaw-dropped) face. */
+  fitFacialHair() {
+    if (!this.beard) return;
+    const hp = this.headGeo.attributes.position, hn = this.headGeo.attributes.normal, bp = this.beard.geometry.attributes.position;
+    for (let i = 0; i < hp.count; i++) {
+      const l = this.beardLift[i];
+      bp.setXYZ(i, hp.getX(i) + hn.getX(i) * l, hp.getY(i) + hn.getY(i) * l, hp.getZ(i) + hn.getZ(i) * l);
+    }
+    bp.needsUpdate = true;
+    this.beard.geometry.computeVertexNormals();
+    this.beard.geometry.computeBoundingSphere();
   }
 
   // ---- per-frame update ----------------------------------------------------------------------
