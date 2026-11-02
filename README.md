@@ -44,7 +44,13 @@
    on emphasis, head nods with speech, and a hand that waves (found with MediaPipe's hand tracker, cut out
    with a colour-keyed flood fill, and painted out of the background).
 
-Everything runs locally in the browser. No audio is uploaded anywhere.
+5. **Your own face, as a cartoon.** Take a selfie or upload a photo: the page reads the face (skin, hair and
+   eye colour; face shape; eye spacing; hair volume, length and curls; glasses; mustache) and builds a 3D
+   cartoon head in Three.js: real eyeballs and eyelids, brows, a sculpted head, hair, glasses. Its mouth is drawn
+   from the person's own lip outline and moves with the captured real-mouth motion, so anyone's cartoon talks
+   along with them. Wrong guesses (hair style, glasses) can be fixed with one click.
+
+Everything runs locally in the browser. No audio or photos are uploaded anywhere.
 
 ## Pages
 
@@ -72,6 +78,8 @@ Everything runs locally in the browser. No audio is uploaded anywhere.
 | `src/visemes.js`, `src/capture.js` | Real-mouth motion capture: similarity alignment, eye-distance normalisation, retargeting to any face |
 | `src/formants.js` | LPC formant tracking (F1/F2) → open / round / spread mouth shapes, on any mic |
 | `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
+| `src/toon-analyze.js` | Photo → cartoon traits: colour sampling, proportions, hair volume/length/curl, glasses and mustache detection |
+| `src/toon-head.js` | The 3D cartoon rig: head, eyes with lids, brows, hair styles, glasses, and a lip-shaped animated mouth |
 | `src/avatar.js` | Puts it all together in Three.js |
 | `src/main.js`, `src/face.js` | Page scripts for `audio.html` (live audio visualisations) and `face.html` (face tracking) |
 

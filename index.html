@@ -27,6 +27,11 @@
     #selfieVideo { width: 200px; border-radius: 10px; transform: scaleX(-1); }
     #selfieVideo[hidden] { display: none; }
     #selfieCount { font-size: 1.1rem; color: #eee; }
+    label.mode { color: #cfd6e4; font-size: .9rem; }
+    .toonbox { background: #1a1e28; border-radius: 10px; padding: .6rem .8rem; margin: .5rem 0; }
+    .toonbox .made { display: flex; gap: .6rem; align-items: center; color: #9aa3b5; font-size: .85rem; }
+    .toonbox img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+    select { background: #222838; color: #eee; border: 1px solid #343c50; border-radius: 6px; padding: .25rem .4rem; }
     #scene.dropping { outline: 3px dashed #4f8cff; outline-offset: 4px; }
     [hidden] { display: none !important; }
     ol.howto { color: #ddd; line-height: 1.7; padding-left: 1.3rem; margin: .25rem 0 .5rem; }
@@ -51,6 +56,7 @@
     <label class="btn secondary" for="photoInput">🖼 Upload a photo</label>
     <input type="file" id="photoInput" accept="image/*" />
     <button id="resetBtn" class="secondary" hidden>↩ Back to my Memoji</button>
+    <label class="mode"><input type="checkbox" id="cartoonMode" checked> turn photos into a 3D cartoon</label>
     <span class="hint">or drag a picture onto the avatar. Photos and Memoji stickers both work; they never leave your device.</span>
     <div class="selfie"><video id="selfieVideo" hidden playsinline muted></video><span id="selfieCount"></span></div>
   </div>
@@ -67,7 +73,16 @@
 
       <div class="ctrl"><span>expressiveness</span><input type="range" id="gain" min="0.8" max="3" step="0.1" value="1.6"></div>
       <div class="ctrl"><span>smoothing</span><input type="range" id="smooth" min="0" max="0.85" step="0.05" value="0.45"></div>
-      <div class="ctrl"><span>3D depth</span><input type="range" id="depth" min="0.3" max="1.6" step="0.1" value="1"></div>
+      <div id="toonControls" class="toonbox" hidden>
+        <div class="made"><img id="sourceThumb" alt="the photo this cartoon was made from"><span>Made from this photo. Pick the style, and fix any wrong guess:</span></div>
+        <div class="ctrl"><span>style</span><select id="toonLook">
+          <option value="feminine">♀ feminine</option><option value="masculine">♂ masculine</option><option value="neutral">neutral</option></select></div>
+        <div class="ctrl"><span>hair</span><select id="hairStyle">
+          <option value="none">none</option><option value="short">short</option><option value="bob">bob (chin length)</option>
+          <option value="curly">curly / voluminous</option><option value="long">long</option></select></div>
+        <div class="ctrl"><span>glasses</span><input type="checkbox" id="toonGlasses"></div>
+      </div>
+      <div class="ctrl" id="depthRow"><span>3D depth</span><input type="range" id="depth" min="0.3" max="1.6" step="0.1" value="1"></div>
       <div class="ctrl"><span>alive</span><label><input type="checkbox" id="alive" checked> blinks, brows, head motion</label></div>
       <div class="ctrl"><span>wave</span><label><input type="checkbox" id="autoWave" checked> when I start talking</label></div>
       <div class="ctrl"><span>mic calibration</span><label><input type="checkbox" id="calib"> experimental</label></div>

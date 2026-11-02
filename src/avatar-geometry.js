@@ -115,9 +115,14 @@ export function buildFace(landmarks, aspect, { depth = 1 } = {}) {
   const flat = Array.from({ length: N }, (_, i) => [pos[i * 3], pos[i * 3 + 1]]);
   const ovalPoly = FACE_OVAL.map((i) => flat[i]);
   const innerPoly = LIPS_INNER.map((i) => flat[i]);
+  // A triangle joining the upper lip to the lower lip would stretch across the
+  // open mouth like a spike, so those are always removed (not just ones whose
+  // centre is inside the lips: in a nearly-closed photo the gap is too thin to tell).
+  const UPPER_INNER = new Set(LIPS_INNER.slice(1, 10)), LOWER_INNER = new Set(LIPS_INNER.slice(11));
   const tris = delaunay(flat).filter(([a, b, c]) => {
     const centroid = [(flat[a][0] + flat[b][0] + flat[c][0]) / 3, (flat[a][1] + flat[b][1] + flat[c][1]) / 3];
-    return pointInPolygon(centroid, ovalPoly) && !pointInPolygon(centroid, innerPoly);
+    const bridges = [a, b, c].some((v) => UPPER_INNER.has(v)) && [a, b, c].some((v) => LOWER_INNER.has(v));
+    return pointInPolygon(centroid, ovalPoly) && !pointInPolygon(centroid, innerPoly) && !bridges;
   });
   // Consistent winding (counter-clockwise seen from the front) so no triangle is culled.
   const indices = new Uint32Array(tris.length * 3);
@@ -147,10 +152,16 @@ export function buildFace(landmarks, aspect, { depth = 1 } = {}) {
     }
     return best;
   };
+  // turnWeight: how much each point follows head turns. 0 on the outline (glued to
+  // the background picture, so no seam), rising to 1 toward the middle of the face.
+  const turnWeight = new Float32Array(N);
   for (let i = 0; i < N; i++) {
-    const ease = smooth(0, 0.12 * H, edgeDist(pos[i * 3], pos[i * 3 + 1]));
+    const d = edgeDist(pos[i * 3], pos[i * 3 + 1]);
+    const ease = smooth(0, 0.12 * H, d);
     pos[i * 3 + 2] = zBack + (pos[i * 3 + 2] - zBack) * ease;
+    turnWeight[i] = smooth(0, 0.22 * H, d);
   }
+  for (const i of FACE_OVAL) turnWeight[i] = 0;
   for (const i of FACE_OVAL) pos[i * 3 + 2] = zBack;
 
   // ---- per-vertex movement weights
@@ -190,7 +201,7 @@ export function buildFace(landmarks, aspect, { depth = 1 } = {}) {
     const knots = [{ x: P(LIPS_INNER[0])[0], mid: P(LIPS_INNER[0])[1], half: 0 }];
     for (let k = 1; k < n / 2; k++) {
       const up = P(LIPS_INNER[k]), lo = P(LIPS_INNER[n - k]);
-      knots.push({ x: (up[0] + lo[0]) / 2, mid: (up[1] + lo[1]) / 2, half: Math.max(0, (up[1] - lo[1]) / 2 - 0.001 * H) });
+      knots.push({ x: (up[0] + lo[0]) / 2, mid: (up[1] + lo[1]) / 2, half: Math.max(0, (up[1] - lo[1]) / 2 + 0.0008 * H) }); // tiny overlap: no slit
     }
     knots.push({ x: P(LIPS_INNER[n / 2])[0], mid: P(LIPS_INNER[n / 2])[1], half: 0 });
     knots.sort((a, b) => a.x - b.x);
@@ -235,7 +246,7 @@ export function buildFace(landmarks, aspect, { depth = 1 } = {}) {
   for (const i of FACE_OVAL) w.brow[i] = 0;
 
   return {
-    rest: pos, uv, indices, weights: w, count: N, eyes,
+    rest: pos, uv, indices, weights: w, count: N, eyes, turnWeight,
     info: { C, H, Wm, zBack, aspect, cornerL: cL, cornerR: cR, closedBy, triangles: tris.length },
   };
 }
@@ -336,4 +347,28 @@ function deformCaptured(face, weights, out, { blink, brow }) {
   const upperLift = out[13 * 3 + 1] - rest[13 * 3 + 1];
   applyEyesAndBrows(face, out, blink, brow);
   return { jawDrop, upperLift, count };
+}
+
+/**
+ * Turn the face (yaw/pitch/roll in radians) around `pivot`, weighted per point so
+ * the outline stays glued to the background and the turn fades in toward the middle.
+ */
+export function turnFace(face, pos, pivot, { yaw = 0, pitch = 0, roll = 0 }) {
+  if (!yaw && !pitch && !roll) return;
+  // Rotation matrix R = Rz(roll) · Ry(yaw) · Rx(pitch)
+  const cx = Math.cos(pitch), sx = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw), cz = Math.cos(roll), sz = Math.sin(roll);
+  const m = [
+    cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx,
+    sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx,
+    -sy, cy * sx, cy * cx,
+  ];
+  const [px, py, pz] = pivot;
+  for (let i = 0; i < face.count; i++) {
+    const wgt = face.turnWeight[i];
+    if (wgt <= 0) continue;
+    const x = pos[i * 3] - px, y = pos[i * 3 + 1] - py, z = pos[i * 3 + 2] - pz;
+    pos[i * 3] += wgt * (m[0] * x + m[1] * y + m[2] * z + px - pos[i * 3]);
+    pos[i * 3 + 1] += wgt * (m[3] * x + m[4] * y + m[5] * z + py - pos[i * 3 + 1]);
+    pos[i * 3 + 2] += wgt * (m[6] * x + m[7] * y + m[8] * z + pz - pos[i * 3 + 2]);
+  }
 }

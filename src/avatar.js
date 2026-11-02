@@ -11,8 +11,10 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 import { createLandmarker, createHandLandmarker } from './facemodel.js';
-import { buildFace, deform, attachVisemes } from './avatar-geometry.js';
+import { buildFace, deform, attachVisemes, turnFace } from './avatar-geometry.js';
 import { faceFrame } from './visemes.js';
+import { analyzeFace } from './toon-analyze.js';
+import { ToonHead, suggestLook } from './toon-head.js';
 import { liftHand } from './avatar-hand.js';
 import { Predictor, MODEL_KEY, MODEL_URL } from './predictor.js';
 import { startMicFrames } from './audio.js';
@@ -48,7 +50,9 @@ function resize() {
 new ResizeObserver(resize).observe(canvas);
 
 // ---- state ---------------------------------------------------------------------
-let face = null;          // buildFace() result
+let face = null;          // buildFace() result (photo mode)
+let toon = null;          // ToonHead (cartoon mode)
+let toonTraits = null;
 let faceGeo = null;
 let faceRoot = null;      // group the face turns with (pivot near the middle of the face)
 let mouthParts = null;
@@ -126,8 +130,12 @@ async function loadAvatar(src) {
 
   // Remove the previous avatar, if any, and switch to the new face.
   face = null;
+  disposeToon();
   root.clear();
+  root.scale.set(1, 1, 1);
   face = nextFace;
+  $('toonControls').hidden = true;
+  $('depthRow').hidden = false;
 
   const flat = (map, order, extra = {}) => new THREE.MeshBasicMaterial({ map, depthTest: false, depthWrite: false, ...extra });
 
@@ -153,7 +161,7 @@ async function loadAvatar(src) {
   faceGeo.setIndex(new THREE.BufferAttribute(face.indices, 1));
   const faceMesh = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial({ map: faceTexture, side: THREE.DoubleSide }));
   faceMesh.renderOrder = 10; // drawn after the mouth interior, so that only shows between the lips
-  faceInner.add(faceMesh);
+  root.add(faceMesh); // not in faceRoot: the face turns per-vertex (turnFace) so its outline stays glued to the picture
   buildMouth(faceInner);
 
   // Hand on top, pivoting at the wrist.
@@ -228,12 +236,85 @@ function framePicture(original, faceFinder, { crop }) {
   return { img, res, notes };
 }
 
+// ---- cartoon mode: photo → 3D cartoon (toon-analyze.js + toon-head.js) ----------------------
+function disposeToon() {
+  if (!toon) return;
+  root.remove(toon.group);
+  toon.dispose();
+  toon = null;
+}
+
+async function loadToon(src) {
+  status.textContent = 'loading picture…';
+  const original = new Image();
+  original.src = src;
+  await original.decode();
+  status.textContent = 'reading the face…';
+  const faceFinder = await createLandmarker('IMAGE');
+  let img, res, notes;
+  try {
+    ({ img, res, notes } = framePicture(original, faceFinder, { crop: true }));
+  } finally {
+    faceFinder.close();
+  }
+  const pixels = img.getContext('2d').getImageData(0, 0, img.width, img.height);
+  toonTraits = analyzeFace(pixels, res.faceLandmarks[0]);
+
+  // Swap the scene over to the cartoon.
+  face = faceGeo = mouthParts = null;
+  handRoot = null;
+  disposeToon();
+  root.clear();
+  root.scale.set(1, 1, 1);
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ map: gradientTexture() }));
+  bg.position.z = -3;
+  root.add(bg);
+  // Show what was detected; people can correct any of it.
+  $('toonLook').value = suggestLook(toonTraits);
+  $('hairStyle').value = toonTraits.hair.style;
+  $('toonGlasses').checked = toonTraits.accessories.glasses;
+  buildToon();
+  $('waveBtn').disabled = true;
+  $('toonControls').hidden = false;
+  $('depthRow').hidden = true;
+  $('sourceThumb').src = img.toDataURL('image/jpeg', 0.85);
+  const hairName = { none: 'no hair', short: 'short hair', curly: 'curly hair', long: 'long hair' }[toonTraits.hair.style];
+  status.textContent = (notes.length ? notes.join(' ') + ' ' : '') +
+    `cartoon ready: ${hairName}${toonTraits.accessories.glasses ? ', glasses' : ''}${toonTraits.accessories.mustache ? ', mustache' : ''}` +
+    (visemeFile ? ', mouth moves with captured real-mouth motion' : '') + '. Wrong guess? Change it below the picture.';
+}
+
+function gradientTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(128, 100, 10, 128, 128, 180);
+  grad.addColorStop(0, '#3a4560'); grad.addColorStop(1, '#141822');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// (Re)build the cartoon from the traits + the current choices in the panel.
+function buildToon() {
+  disposeToon();
+  toon = new ToonHead(toonTraits, visemeFile, { look: $('toonLook').value });
+  toon.setHairStyle($('hairStyle').value);
+  toon.setGlasses($('toonGlasses').checked);
+  toon.group.scale.setScalar(0.2);
+  toon.group.position.y = 0.075;
+  root.add(toon.group);
+}
+$('toonLook').addEventListener('change', () => { if (toonTraits && toon) buildToon(); });
+$('hairStyle').addEventListener('change', (e) => toon?.setHairStyle(e.target.value));
+$('toonGlasses').addEventListener('change', (e) => toon?.setGlasses(e.target.checked));
+$('cartoonMode').addEventListener('change', () => { if (currentSrc !== DEFAULT_PICTURE) useOwnPicture(currentSrc); });
+
 // ---- trying your own face: selfie, upload, drag-and-drop ----------------------------------
 async function useOwnPicture(src) {
   currentSrc = src;
   $('resetBtn').hidden = src === DEFAULT_PICTURE;
   try {
-    await loadAvatar(src);
+    if (src !== DEFAULT_PICTURE && $('cartoonMode').checked) await loadToon(src);
+    else await loadAvatar(src);
     $('scene').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (err) {
     status.textContent = '⚠️ ' + err.message;
@@ -436,7 +517,7 @@ function visemeWeights() {
 }
 
 // Eyes glance around now and then, like a person thinking or listening.
-function moveEyes(pos, now) {
+function updateGlance(now) {
   if (now > glance.next) {
     const r = Math.random();
     [glance.tx, glance.ty] = r < 0.45 ? [0, 0] : r < 0.65 ? [-1, 0] : r < 0.85 ? [1, 0] : [Math.random() * 2 - 1, -0.6];
@@ -444,6 +525,8 @@ function moveEyes(pos, now) {
   }
   glance.x += (glance.tx - glance.x) * 0.3;   // quick, like a real eye movement
   glance.y += (glance.ty - glance.y) * 0.3;
+}
+function moveEyes(pos) {
   const { ux, iod } = face.frame;
   const amp = 0.045 * iod;
   const dx = (glance.x * ux[0] + glance.y * ux[1]) * amp, dy = (glance.x * ux[1] - glance.y * ux[0]) * amp;
@@ -537,7 +620,7 @@ canvas.addEventListener('dblclick', () => { yaw = pitch = 0; });
 const debugRows = $('debug');
 function frame(t) {
   requestAnimationFrame(frame);
-  if (face && faceGeo && mouthParts) {
+  if ((face && faceGeo && mouthParts) || toon) {
     const now = performance.now();
     const alive = $('alive').checked;
 
@@ -545,34 +628,52 @@ function frame(t) {
     const emphasis = clamp((voice.fast - voice.slow) * 5, 0, 1);
     anim.brow += ((alive ? emphasis : 0) - anim.brow) * 0.15;
 
-    const pos = faceGeo.attributes.position.array;
-    const { jawDrop, upperLift = 0 } = deform(face, blendshape, pos, {
-      blink: alive ? blinkAmount(now) : 0, brow: anim.brow, visemes: face.visemes ? visemeWeights() : null,
-    });
-    if (alive) moveEyes(pos, now);
-    faceGeo.attributes.position.needsUpdate = true;
-    faceGeo.computeBoundingSphere();
-    updateMouthMask(pos);
-    mouthParts.upperTeeth.position.y = mouthParts.upperY + upperLift;
-    mouthParts.lowerTeeth.position.y = mouthParts.lowerY - jawDrop;
-    mouthParts.tongue.position.y = mouthParts.tongueY - jawDrop * 0.85;
-
     // Head: slow idle drift + small nods that follow the rhythm of speech.
     const s = t / 1000;
     const idle = alive ? 1 : 0;
     // Talking energy: rises while you speak, fades ~1 s after you stop.
     anim.talk += ((voice.talking ? 1 : 0) - anim.talk) * 0.05;
     const env = envelope.value;
-    faceRoot.rotation.y = yaw + idle * (0.06 * Math.sin(s * 0.43) + 0.03 * Math.sin(s * 1.3) + 0.05 * anim.talk * Math.sin(s * 2.1));
-    faceRoot.rotation.x = pitch + idle * (0.025 * Math.sin(s * 0.31) - 0.08 * emphasis - 0.06 * env);
-    faceRoot.rotation.z = idle * (0.02 * Math.sin(s * 0.27) + 0.03 * anim.talk * Math.sin(s * 1.7));
+    const head = {
+      yaw: yaw + idle * (0.06 * Math.sin(s * 0.43) + 0.03 * Math.sin(s * 1.3) + 0.05 * anim.talk * Math.sin(s * 2.1)),
+      pitch: pitch + idle * (0.025 * Math.sin(s * 0.31) - 0.08 * emphasis - 0.06 * env),
+      roll: idle * (0.02 * Math.sin(s * 0.27) + 0.03 * anim.talk * Math.sin(s * 1.7)),
+    };
+    const blink = alive ? blinkAmount(now) : 0;
+    if (alive) updateGlance(now); else { glance.x = glance.y = 0; }
 
-    // Whole avatar (hair, body, hand): a gentle sway and a small bounce on syllables,
-    // like a Memoji being animated. The view is zoomed in, so the edges stay hidden.
+    if (toon) {
+      // Cartoon mode: a real 3D rig, so every part just gets its value.
+      toon.update({
+        weights: visemeWeights(), blink, brow: anim.brow, glance,
+        yaw: head.yaw * 1.4, pitch: head.pitch * 1.3, roll: head.roll,
+        breath: idle * 0.012 * Math.sin(s * 2 * Math.PI * 0.22),
+      });
+    } else {
+      faceRoot.rotation.set(head.pitch, head.yaw, head.roll);
+      const pos = faceGeo.attributes.position.array;
+      const { jawDrop, upperLift = 0 } = deform(face, blendshape, pos, {
+        blink, brow: anim.brow, visemes: face.visemes ? visemeWeights() : null,
+      });
+      if (alive) moveEyes(pos);
+      updateMouthMask(pos); // before turning: the mask lives in faceRoot, which turns as a whole
+      turnFace(face, pos, [faceRoot.position.x, faceRoot.position.y, faceRoot.position.z], head);
+      faceGeo.attributes.position.needsUpdate = true;
+      faceGeo.computeBoundingSphere();
+      // Teeth only when the lips are actually apart (no specks through closed lips).
+      const apart = jawDrop > 0.006 * face.info.H;
+      mouthParts.upperTeeth.visible = mouthParts.lowerTeeth.visible = mouthParts.tongue.visible = apart;
+      mouthParts.upperTeeth.position.y = mouthParts.upperY + upperLift;
+      mouthParts.lowerTeeth.position.y = mouthParts.lowerY - jawDrop;
+      mouthParts.tongue.position.y = mouthParts.tongueY - jawDrop * 0.85;
+    }
+
+    // Whole avatar (hair, body, hand): a gentle sway and a small bounce on syllables.
+    // The view is zoomed in, so the edges stay hidden.
     root.rotation.z = idle * (0.012 * Math.sin(s * 0.5) + 0.018 * anim.talk * Math.sin(s * 1.9));
     root.position.y = idle * (0.004 * Math.sin(s * 0.8) - 0.012 * env);
     root.position.x = idle * 0.006 * anim.talk * Math.sin(s * 1.1);
-    root.scale.set(1, 1 + idle * 0.004 * Math.sin(s * 2 * Math.PI * 0.22), 1); // breathing
+    if (!toon) root.scale.set(1, 1 + idle * 0.004 * Math.sin(s * 2 * Math.PI * 0.22), 1); // breathing
 
     if (handRoot) handRoot.rotation.z = alive || anim.waveStart >= 0 ? waveAngle(now) : 0;
   }
@@ -611,7 +712,7 @@ $('photoInput').addEventListener('change', (e) => {
   e.target.value = ''; // so choosing the same file again still triggers
 });
 $('depth').addEventListener('change', async () => {
-  if (face) try { await loadAvatar(currentSrc); } catch (err) { status.textContent = 'error: ' + err.message; }
+  if (face && !toon) try { await loadAvatar(currentSrc); } catch (err) { status.textContent = 'error: ' + err.message; }
 });
 
 // ---- start ---------------------------------------------------------------------------
