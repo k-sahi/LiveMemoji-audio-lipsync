@@ -30,13 +30,13 @@ function cartoonColor(rgb, { lift = 1.08, sat = 1.12 } = {}) {
 export const LOOKS = {
   feminine: {
     eye: 1.1, lash: 1.9, flicks: 4, lid: -0.06, brow: 0.6, browThin: true, arch: 1.8, browLift: 0.03,
-    upperLip: 1.4, lowerLip: 1.55, bow: 1, mouthW: 0.92, lipTint: [208, 66, 104], lipMix: 0.5, gloss: true,
+    upperLip: 1.2, lowerLip: 1.3, bow: 1, mouthW: 0.9, lipTint: [208, 66, 104], lipMix: 0.5, gloss: true,
     nose: 0.75, taper: 0.14, jawPow: 1.1, jawAngle: 0, chin: -0.02, cheekbone: 0.08, browRidge: 0,
     blush: 0.38, neck: 0.8, shoulders: 1.55, adamsApple: false, facialHair: 'none',
   },
   masculine: {
     eye: 0.88, lash: 0.6, flicks: 0, lid: 0.12, brow: 1.6, browThin: false, arch: 0.25, browLift: -0.035,
-    upperLip: 0.55, lowerLip: 0.9, bow: 0, mouthW: 1.12, lipTint: null, lipMix: 0.6, gloss: false,
+    upperLip: 0.6, lowerLip: 0.9, bow: 0, mouthW: 1.04, lipTint: null, lipMix: 0.6, gloss: false,
     nose: 1.3, taper: -0.16, jawPow: 3.4, jawAngle: 0.08, chin: 0.08, cheekbone: 0.02, browRidge: 0.04,
     blush: 0, neck: 1.28, shoulders: 2.1, adamsApple: true, facialHair: 'stubble',
   },
@@ -115,7 +115,7 @@ export class ToonHead {
     this.eyeSpread = caricature(2.25 / Math.max(1, f.cheekWidth), 1, 0.84, 1.18);             // eyes far apart vs close
     this.eyeScale = caricature(f.eyeWidth, 0.5, 0.78, 1.32) * L.eye;                           // eye size
     this.noseScale = caricature(f.noseWidth, 0.5, 0.7, 1.55) * L.nose;                         // nose width
-    this.mouthScale = caricature(f.mouthWidth, 0.85, 0.78, 1.3) * L.mouthW;                    // mouth width
+    this.mouthScale = Math.min(1.12, Math.max(0.85, 1 + (f.mouthWidth / 0.85 - 1) * 1.2)) * L.mouthW; // mouth width (mildly exaggerated)
     this.jawPow = L.jawPow;
     this.hy = 1.16;
     this.dz = 1.0;
@@ -313,7 +313,7 @@ export class ToonHead {
   setupMouth(visemeFile) {
     const m = this.t.mouth, f = this.t.face;
     this.mouthY = EYE_Y - this.k * 0.8 * Math.max(0.9, Math.min(1.5, f.mouthY));
-    this.mScale = this.k * 1.1 * this.mouthScale; // cartoon mouths are a bit bigger than real ones
+    this.mScale = this.k * 0.88 * this.mouthScale;
     // Neutral lips from the photo, with any gap closed (paired inner points meet in the middle).
     const inner = m.inner.map((p) => p.slice()), outer = m.outer.map((p) => p.slice());
     for (let i = 1; i < 10; i++) {
@@ -357,7 +357,7 @@ export class ToonHead {
 
   /** Current lip outlines (head coords) for the given shape weights. */
   lipPoints(weights) {
-    const E = 1.25; // cartoon exaggeration
+    const E = 0.95; // how far the mouth moves (1 = like the real captured mouth)
     const n = 20;
     const cur = (arr, off) => arr.map((p, i) => {
       let x = p[0], y = p[1];
