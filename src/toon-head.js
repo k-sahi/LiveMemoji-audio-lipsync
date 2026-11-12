@@ -13,9 +13,19 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 
 const SHAPES = ['ah', 'ee', 'oo', 'mm', 'ff', 'smile'];
-const EYE_Y = 0.12;
+const EYE_Y = 0.02;   // eyes a little below the middle of the head: a big forehead reads as cute and friendly
 const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 const srgb = ([r, g, b], k = 1) => new THREE.Color().setRGB(Math.min(1, r * k / 255), Math.min(1, g * k / 255), Math.min(1, b * k / 255), THREE.SRGBColorSpace);
+
+// Three flat light levels for cel shading.
+let _tones = null;
+const TONES = () => {
+  if (_tones) return _tones;
+  _tones = new THREE.DataTexture(new Uint8Array([150, 150, 150, 255, 210, 210, 210, 255, 255, 255, 255, 255]), 3, 1);
+  _tones.minFilter = _tones.magFilter = THREE.NearestFilter;
+  _tones.needsUpdate = true;
+  return _tones;
+};
 
 // Make photo colours a bit more "cartoon": a little brighter and cleaner.
 function cartoonColor(rgb, { lift = 1.08, sat = 1.12 } = {}) {
@@ -31,7 +41,7 @@ export const LOOKS = {
   feminine: {
     eye: 1.1, lash: 1.9, flicks: 4, lid: -0.06, brow: 0.6, browThin: true, arch: 1.8, browLift: 0.03,
     upperLip: 1.2, lowerLip: 1.3, bow: 1, mouthW: 0.9, lipTint: [208, 66, 104], lipMix: 0.5, gloss: true,
-    nose: 0.75, taper: 0.14, jawPow: 1.1, jawAngle: 0, chin: -0.02, cheekbone: 0.08, browRidge: 0,
+    nose: 0.85, taper: 0.14, jawPow: 1.1, jawAngle: 0, chin: -0.02, cheekbone: 0.08, browRidge: 0,
     blush: 0.38, neck: 0.8, shoulders: 1.55, adamsApple: false, facialHair: 'none',
   },
   masculine: {
@@ -71,7 +81,7 @@ export function suggestFacialHair(traits, look) {
 }
 
 // Caricature: push each measurement away from the average, like a caricature artist.
-const EXAGGERATE = 2.2;
+const EXAGGERATE = 1.7;   // enough to tell faces apart, not so much it looks strange
 const caricature = (value, avg, min, max) => Math.min(max, Math.max(min, 1 + (value / avg - 1) * EXAGGERATE));
 
 /** A tube whose thickness follows fn(t), t = 0..1 along the curve (brows, mustaches, lashes, locks). */
@@ -124,22 +134,27 @@ export class ToonHead {
 
     this.skin = cartoonColor(traits.colors.skin, { lift: 1.06, sat: 1.05 });
     this.hairColor = cartoonColor(traits.colors.hair, { lift: 1.15, sat: 1.0 });
+    // Cel shading (3 flat tones instead of realistic shading) + soft outlines: a friendly "animated show" look.
+    const toon = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap: TONES(), ...extra });
+    const irisCol = cartoonColor(traits.colors.iris, { lift: 1.1, sat: 1.1 });
     this.mat = {
-      skin: new THREE.MeshStandardMaterial({ color: this.skin, roughness: 0.55, emissive: this.skin.clone().multiplyScalar(0.08) }),
-      skinDark: new THREE.MeshStandardMaterial({ color: this.skin.clone().multiplyScalar(0.93), roughness: 0.55 }),
-      hair: new THREE.MeshStandardMaterial({ color: this.hairColor, roughness: 0.75 }),
-      brow: new THREE.MeshStandardMaterial({ color: cartoonColor(traits.colors.brows, { lift: 1.05 }), roughness: 0.8 }),
-      lips: new THREE.MeshStandardMaterial({ color: lipColor(traits, L), roughness: L.gloss ? 0.22 : 0.6, side: THREE.DoubleSide }),
-      mouth: new THREE.MeshBasicMaterial({ color: 0x3a0d16, side: THREE.DoubleSide }),
-      teeth: new THREE.MeshStandardMaterial({ color: 0xf6f3ec, roughness: 0.35, side: THREE.DoubleSide }),
-      tongue: new THREE.MeshStandardMaterial({ color: 0xc0505f, roughness: 0.5, side: THREE.DoubleSide }),
-      white: new THREE.MeshStandardMaterial({ color: 0xfbfbfb, roughness: 0.25 }),
-      iris: new THREE.MeshStandardMaterial({ color: cartoonColor(traits.colors.iris, { lift: 1.2, sat: 1.25 }), roughness: 0.3 }),
-      pupil: new THREE.MeshStandardMaterial({ color: 0x0b0b0e, roughness: 0.2 }),
+      skin: toon(this.skin, { emissive: this.skin.clone().multiplyScalar(0.12) }),
+      skinDark: toon(this.skin.clone().multiplyScalar(0.86), { emissive: this.skin.clone().multiplyScalar(0.06) }),
+      hair: toon(this.hairColor),
+      brow: toon(cartoonColor(traits.colors.brows, { lift: 1.2, sat: 0.9 })),
+      lips: toon(lipColor(traits, L), { side: THREE.DoubleSide }),
+      mouth: new THREE.MeshBasicMaterial({ color: 0x4a1420, side: THREE.DoubleSide }),
+      teeth: new THREE.MeshBasicMaterial({ color: 0xfbf8f2, side: THREE.DoubleSide }),
+      tongue: toon(new THREE.Color(0xd8606e), { side: THREE.DoubleSide }),
+      // eyes: glossy dark ovals with a hint of the person's eye colour (no white around them = never staring)
+      eye: new THREE.MeshBasicMaterial({ color: irisCol.clone().lerp(new THREE.Color(0x120c0a), 0.72) }),
+      eyeRing: new THREE.MeshBasicMaterial({ color: irisCol.clone().lerp(new THREE.Color(0x120c0a), 0.25) }),
       shine: new THREE.MeshBasicMaterial({ color: 0xffffff }),
-      lash: new THREE.MeshStandardMaterial({ color: srgb(traits.colors.brows, 0.6), roughness: 0.8 }),
-      shirt: new THREE.MeshStandardMaterial({ color: cartoonColor(traits.colors.shirt, { lift: 1.05 }), roughness: 0.8 }),
-      frame: new THREE.MeshStandardMaterial({ color: 0x202024, roughness: 0.3, metalness: 0.2 }),
+      lash: new THREE.MeshBasicMaterial({ color: srgb(traits.colors.brows, 0.45) }),
+      shirt: toon(cartoonColor(traits.colors.shirt, { lift: 1.08 })),
+      frame: toon(new THREE.Color(0x26262c)),
+      outline: new THREE.MeshBasicMaterial({ color: this.skin.clone().multiplyScalar(0.42), side: THREE.BackSide }),
+      hairOutline: new THREE.MeshBasicMaterial({ color: this.hairColor.clone().multiplyScalar(0.5), side: THREE.BackSide }),
     };
 
     this.addLights();
@@ -163,10 +178,13 @@ export class ToonHead {
   }
 
   addLights() {
-    this.group.add(new THREE.HemisphereLight(0xffffff, 0x5a4650, 1.5));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(-2, 3, 5); this.group.add(key);
-    const fill = new THREE.DirectionalLight(0xfff1e6, 0.6); fill.position.set(3, 0, 3); this.group.add(fill);
-    const rim = new THREE.DirectionalLight(0xdde8ff, 1.0); rim.position.set(2, 2, -4); this.group.add(rim);
+    // Soft, warm studio light: bright fill so there are no harsh shadows, plus a cool rim light that outlines the head.
+    this.group.add(new THREE.AmbientLight(0xfff3ea, 1.1));
+    this.group.add(new THREE.HemisphereLight(0xfff6ee, 0x6a5560, 0.6));
+    const key = new THREE.DirectionalLight(0xfff4ea, 2.0); key.position.set(-1.5, 2.5, 5); this.group.add(key);
+    const fill = new THREE.DirectionalLight(0xffe9dc, 0.4); fill.position.set(3, 0.5, 3); this.group.add(fill);
+    const rim = new THREE.DirectionalLight(0xb9d4ff, 1.6); rim.position.set(2.5, 2, -3); this.group.add(rim);
+    const rim2 = new THREE.DirectionalLight(0xffc9e6, 0.9); rim2.position.set(-2.5, 1, -3); this.group.add(rim2);
   }
 
   buildHead() {
@@ -191,7 +209,9 @@ export class ToonHead {
     this.headGeo = g;
     this.headBase = Float32Array.from(p.array);
     this.headMesh = new THREE.Mesh(g, this.mat.skin);
-    this.inner.add(this.headMesh);
+    const outline = new THREE.Mesh(g, this.mat.outline);   // the same mesh, slightly bigger, inside-out: a soft outline
+    outline.scale.setScalar(1.022);
+    this.inner.add(this.headMesh, outline);
   }
 
   buildBody() {
@@ -202,6 +222,9 @@ export class ToonHead {
     torso.scale.set(this.look.shoulders, 0.85, 1.05);
     torso.position.set(0, -2.25, -0.15);
     this.torso = torso;
+    const shirtLine = new THREE.Mesh(torso.geometry, new THREE.MeshBasicMaterial({ color: this.mat.shirt.color.clone().multiplyScalar(0.45), side: THREE.BackSide }));
+    shirtLine.scale.setScalar(1.015);
+    torso.add(shirtLine);
     this.group.add(neck, torso);
     if (this.look.adamsApple) {
       const bump = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), this.mat.skinDark);
@@ -212,53 +235,44 @@ export class ToonHead {
   }
 
   buildEyes() {
-    const f = this.t.face;
-    const r = 0.19 * this.wx * this.eyeScale, L = this.look;
+    // Friendly cartoon eyes: tall, glossy, dark ovals with two big sparkles. They blink by squashing,
+    // and glance by sliding a little. (Realistic eyeballs with white all round read as staring or creepy.)
+    const r = 0.2 * this.wx * Math.min(1.3, this.eyeScale), L = this.look;
     this.eyeR = r;
     this.eyes = [];
+    const disc = (radius, mat) => new THREE.Mesh(new THREE.CircleGeometry(radius, 28), mat);
     for (const side of [-1, 1]) {
       const x = side * 0.5 * this.k * this.eyeSpread, y = EYE_Y;
       const root = new THREE.Group();
-      root.position.set(x, y, this.surfaceZ(x, y) - r * 0.42);
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 24), this.mat.white);
-      const look = new THREE.Group(); // rotates for glances
-      const cap = (radius, theta, mat) => {
-        const m = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 12, 0, Math.PI * 2, 0, theta), mat);
-        m.rotation.x = Math.PI / 2; // the cap's pole points forward (+z)
-        return m;
-      };
-      look.add(cap(r * 1.004, 0.62, this.mat.iris), cap(r * 1.008, 0.27, this.mat.pupil));
-      const shine = new THREE.Mesh(new THREE.SphereGeometry(r * 0.12, 12, 8), this.mat.shine);
-      shine.position.set(-r * 0.22, r * 0.26, r * 0.93);
-      const shine2 = new THREE.Mesh(new THREE.SphereGeometry(r * 0.06, 10, 6), this.mat.shine);
-      shine2.position.set(r * 0.2, -r * 0.18, r * 0.97);
-      look.add(shine, shine2);
-      // Upper lid: a skin-coloured half shell that rotates down over the eye; lashes on its edge.
-      const lid = new THREE.Group();
-      lid.add(new THREE.Mesh(new THREE.SphereGeometry(r * 1.06, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), this.mat.skin));
-      const lash = new THREE.Mesh(new THREE.TorusGeometry(r * 1.07, r * 0.07 * L.lash, 8, 40, Math.PI), this.mat.lash);
-      lash.rotation.x = Math.PI / 2;
-      lid.add(lash);
+      root.position.set(x, y, this.surfaceZ(x, y) + 0.01);
+      root.lookAt(x * 1.6, y * 1.2, this.surfaceZ(x, y) + 2.5);     // face outward with the head's curve
+      const eye = new THREE.Group();                                  // squashes for blinks
+      const oval = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), this.mat.eye);
+      oval.scale.set(r * 0.62, r * 0.84, r * 0.28);
+      const ring = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), this.mat.eyeRing);   // a lighter rim at the bottom: the eye colour
+      ring.scale.set(r * 0.5, r * 0.5, r * 0.2);
+      ring.position.set(0, -r * 0.3, r * 0.1);
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), this.mat.eye);
+      pupil.scale.set(r * 0.42, r * 0.55, r * 0.24);
+      pupil.position.set(0, -r * 0.05, r * 0.08);
+      const sparkle = new THREE.Group();                              // highlights stay put while the eye glances
+      const big = disc(r * 0.24, this.mat.shine); big.position.set(-r * 0.2, r * 0.3, r * 0.32);
+      const small = disc(r * 0.11, this.mat.shine); small.position.set(r * 0.22, -r * 0.28, r * 0.32);
+      sparkle.add(big, small);
+      eye.add(oval, ring, pupil, sparkle);
       if (L.flicks) {
-        // Lash flicks at the outer corner (they ride on the lid, so they blink too).
-        for (const [a, len] of [[0.12, 0.42], [0.3, 0.4], [0.48, 0.34], [0.66, 0.26]].slice(0, L.flicks)) {
-          const ang = side > 0 ? a : Math.PI - a;          // outer side of each eye
-          const base = new THREE.Vector3(Math.cos(ang) * r * 1.07, 0, Math.sin(ang) * r * 1.07);
-          const dir = new THREE.Vector3(Math.cos(ang) * 0.8, 0.35, Math.sin(ang) * 0.5).normalize().multiplyScalar(r * len);
-          const tip = base.clone().add(dir);
-          const mid = base.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, r * 0.06, 0));
-          lid.add(new THREE.Mesh(taperTube(new THREE.QuadraticBezierCurve3(base, mid, tip), 8, r * 0.05, 6, (t) => 1 - 0.85 * t), this.mat.lash));
+        // Lashes: little flicks at the top outer corner (they squash with the blink).
+        for (const [a, len] of [[0.35, 0.42], [0.6, 0.38], [0.85, 0.3]].slice(0, Math.min(3, L.flicks))) {
+          const ang = Math.PI / 2 - side * a;
+          const base = new THREE.Vector3(Math.cos(ang) * r * 0.6, Math.sin(ang) * r * 0.8, r * 0.1);
+          const tip = base.clone().add(new THREE.Vector3(Math.cos(ang) * r * len, Math.sin(ang) * r * len * 0.8 + r * 0.05, 0));
+          eye.add(new THREE.Mesh(taperTube(new THREE.LineCurve3(base, tip), 6, r * 0.07, 6, (t) => 1 - 0.8 * t), this.mat.lash));
         }
       }
-      // Lower lid: a thin shell covering the bottom of the eye.
-      const lower = new THREE.Mesh(new THREE.SphereGeometry(r * 1.05, 32, 12, 0, Math.PI * 2, Math.PI * 0.78, Math.PI * 0.22), this.mat.skin);
-      lower.rotation.x = -0.15;
-      root.add(ball, look, lid, lower);
+      root.add(eye);
       this.inner.add(root);
-      this.eyes.push({ root, look, lid });
+      this.eyes.push({ root, eye, sparkle, side });
     }
-    const ratio = f.eyeOpen / Math.max(0.2, f.eyeWidth); // ≈ 0.3 typical
-    this.lidRest = -(0.6 + Math.max(-0.12, Math.min(0.15, (ratio - 0.3) * 1.2))) + L.lid;
   }
 
   buildBrowsNoseEars() {
@@ -272,8 +286,8 @@ export class ToonHead {
         .map(([x, y]) => new THREE.Vector3(x, y, this.surfaceZ(x, y) + 0.03));
       const curve = new THREE.QuadraticBezierCurve3(...pts);
       const thick = L.browThin ? (t) => 1.15 - 0.85 * t * t : (t) => 1 - 0.15 * t;
-      const brow = new THREE.Mesh(taperTube(curve, 24, 0.034 * L.brow, 8, thick, 0.6), this.mat.brow);
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.034 * L.brow * thick(0), 10, 8), this.mat.brow);
+      const brow = new THREE.Mesh(taperTube(curve, 24, 0.028 * L.brow, 8, thick, 0.55), this.mat.brow);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.028 * L.brow * thick(0), 10, 8), this.mat.brow);
       cap.position.copy(pts[0]); cap.scale.z = 0.6;
       const g = new THREE.Group(); g.add(brow, cap);
       this.inner.add(g);
@@ -281,7 +295,7 @@ export class ToonHead {
     }
     // Nose
     const nw = 0.105 * this.wx * this.noseScale;
-    const ny = EYE_Y - this.k * 0.8 * Math.max(0.55, Math.min(0.95, f.noseY));
+    const ny = EYE_Y - this.k * 0.68 * Math.max(0.55, Math.min(0.95, f.noseY));
     const nose = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), this.mat.skinDark);
     nose.scale.set(nw, nw * 0.85, nw * 0.9);
     nose.position.set(0, ny, this.surfaceZ(0, ny) + nw * 0.25);
@@ -312,7 +326,7 @@ export class ToonHead {
   // ---- mouth -------------------------------------------------------------------------------
   setupMouth(visemeFile) {
     const m = this.t.mouth, f = this.t.face;
-    this.mouthY = EYE_Y - this.k * 0.8 * Math.max(0.9, Math.min(1.5, f.mouthY));
+    this.mouthY = Math.max(EYE_Y - this.k * 0.62 * Math.max(0.9, Math.min(1.5, f.mouthY)), this.noseY - 0.3); // cartoon faces keep the mouth close under the nose
     this.mScale = this.k * 0.88 * this.mouthScale;
     // Neutral lips from the photo, with any gap closed (paired inner points meet in the middle).
     const inner = m.inner.map((p) => p.slice()), outer = m.outer.map((p) => p.slice());
@@ -474,15 +488,23 @@ export class ToonHead {
       const front = smooth(0.15, 0.85, z);                     // 1 at the face, 0 at the back
       const line = foreheadY * front + (style === 'buzz' || style === 'bun' ? -0.45 : -0.62) * (1 - front) + temple * Math.abs(x) * front;
       keep[i] = y > line ? 1 : 0;
-      p.setXYZ(i, x * this.halfWidthAt(y) * vol, y * vol * 0.98 + (style === 'curly' ? 0.05 : 0), z * this.dz * vol * (z < 0 ? 0.95 : 1));
+      let ux = x, uz = z, yy = y;
+      if (!keep[i] && line / this.hy < 0.99) {
+        // move it up onto the hairline (staying on the sphere), so the hair's edge is a smooth curve
+        const yu = Math.max(-0.999, Math.min(0.999, line / this.hy)), r0 = Math.sqrt(Math.max(1e-6, 1 - (y / this.hy) ** 2)), r1 = Math.sqrt(1 - yu * yu);
+        ux = x * r1 / r0; uz = z * r1 / r0; yy = yu * this.hy;
+      }
+      p.setXYZ(i, ux * this.halfWidthAt(yy) * vol, yy * vol * 0.98 + (style === 'curly' ? 0.05 : 0), uz * this.dz * vol * (uz < 0 ? 0.95 : 1));
     }
     const idx = g.index.array, kept = [];
-    for (let t = 0; t < idx.length; t += 3) if (keep[idx[t]] && keep[idx[t + 1]] && keep[idx[t + 2]]) kept.push(idx[t], idx[t + 1], idx[t + 2]);
+    for (let t = 0; t < idx.length; t += 3) if (keep[idx[t]] || keep[idx[t + 1]] || keep[idx[t + 2]]) kept.push(idx[t], idx[t + 1], idx[t + 2]);
     g.setIndex(kept);
     g.computeVertexNormals();
     const shell = new THREE.Mesh(g, style === 'buzz' ? this.mat.hair.clone() : this.mat.hair);
-    if (style === 'buzz') { shell.material.color.multiplyScalar(0.8); shell.material.roughness = 1; }
-    this.hair.add(shell);
+    if (style === 'buzz') shell.material.color.multiplyScalar(0.8);
+    const hairLine = new THREE.Mesh(g, this.mat.hairOutline);
+    hairLine.scale.setScalar(1.02);
+    this.hair.add(shell, hairLine);
     const rand = mulberry32(7);
     const onHead = (x, y, lift = 0) => new THREE.Vector3(x, y, this.surfaceZ(x, Math.min(y, this.hy * 0.98)) * vol + lift);
     if (masc && style !== 'curly') {
@@ -523,7 +545,7 @@ export class ToonHead {
         const pts = [onHead(xx, y0, 0), onHead(xx + 0.04, y0 + 0.16, 0.1), onHead(xx + 0.09, y0 + 0.3, 0.06)];
         this.hair.add(new THREE.Mesh(taperTube(new THREE.CatmullRomCurve3(pts), 16, 0.13, 10, (t) => 0.95 - 0.5 * t, 0.8), this.mat.hair));
       }
-    } else for (let k = -4; k <= 4; k++) {
+    } else if (style !== 'curly') for (let k = -4; k <= 4; k++) {   // (curls already frame the forehead)
       // Fringe: soft bumps along the front hairline.
       const x = k * 0.13 * this.wx, y = foreheadY + 0.03 - (k * k) * 0.006;
       const b = new THREE.Mesh(new THREE.SphereGeometry(0.17, 20, 14), this.mat.hair);
@@ -679,11 +701,12 @@ export class ToonHead {
 
   // ---- per-frame update ----------------------------------------------------------------------
   update({ weights = {}, blink = 0, brow = 0, glance = { x: 0, y: 0 }, yaw = 0, pitch = 0, roll = 0, breath = 0 }) {
-    this.updateMouth(weights);
+    this.updateMouth({ ...weights, smile: (weights.smile ?? 0) + 0.22 });   // a gentle resting smile
     for (const e of this.eyes) {
-      e.lid.rotation.x = this.lidRest + blink * (-this.lidRest + 0.42) - brow * 0.08;
-      e.look.rotation.y = glance.x * 0.32;
-      e.look.rotation.x = -glance.y * 0.22;
+      const r = this.eyeR, smileSquint = Math.min(0.25, (weights.smile ?? 0) * 0.25);
+      e.eye.scale.y = Math.max(0.07, 1 - blink) * (1 - smileSquint) * (1 + brow * 0.06);
+      e.eye.position.set(glance.x * r * 0.18, -glance.y * r * 0.14, 0);
+      e.sparkle.position.set(-glance.x * r * 0.08, glance.y * r * 0.06, 0);
     }
     for (const b of this.brows) {
       b.g.position.y = brow * 0.07 + (weights.smile ?? 0) * 0.015;

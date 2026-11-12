@@ -21,6 +21,8 @@ import { startMicFrames } from './audio.js';
 import { createFeatureExtractor } from './features.js';
 import { createVoiceEnvelope } from './voice-envelope.js';
 import { createFormantTracker, vowelShape } from './formants.js';
+import { createListener } from './listening.js';
+import { createLatencyMeter, STAGES } from './latency.js';
 
 const tf = window.tf;
 const $ = (id) => document.getElementById(id);
@@ -61,6 +63,9 @@ let predictor = null;
 let values = null;
 const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false, heardAt: 0, startedAt: 0 };
 const envelope = createVoiceEnvelope();
+const listener = createListener();
+const latency = createLatencyMeter();   // per-stage timing of voice → face
+let pendingFrame = null;                   // the newest audio result, waiting to be drawn   // reacts to pauses, "umm" and the end of your turn
 let formants = null;
 const vowel = { open: 0, round: 0, spread: 0, fric: 0, voiced: false }; // smoothed mouth shape from formants
 let visemeFile = null;   // captured real-mouth motion (capture.html), if available
@@ -312,6 +317,7 @@ $('toonLook').addEventListener('change', () => {
   $('facialHair').value = suggestFacialHair(toonTraits, $('toonLook').value);
   buildToon();
 });
+$('showLatency').addEventListener('change', (e) => { $('latencyBox').hidden = !e.target.checked; if (e.target.checked) showLatency(); });
 $('facialHair').addEventListener('change', (e) => toon?.setFacialHair(e.target.value));
 $('hairStyle').addEventListener('change', (e) => toon?.setHairStyle(e.target.value));
 $('toonGlasses').addEventListener('change', (e) => toon?.setGlasses(e.target.checked));
@@ -466,11 +472,21 @@ $('micBtn').addEventListener('click', async (e) => {
     const mic = await startMicFrames({
       fps: 30,
       windowSize: 1024,
-      onFrame: (samples) => {
+      onFrame: (samples, endFrame) => {
         if (!features) return;
+        // When was this sound actually made? The middle of the 1024-sample window.
+        const t0 = performance.now();
+        const halfWindow = (samples.length / 2 / mic.sampleRate) * 1000;
+        const soundAt = mic.audioFrameToPerfTime(endFrame) - halfWindow;
+        latency.record('audio in', t0 - soundAt);
         const { mfcc, rms } = features.compute(samples);
+        const t1 = performance.now();
+        latency.record('features', t1 - t0);
         envelope.update(rms);
-        updateVowel(formants.analyze(samples));
+        const f = formants.analyze(samples);
+        latency.record('formants', performance.now() - t1);
+        updateVowel(f);
+        listener.hear({ now: performance.now(), loud: envelope.value > 0.15, shape: f && envelope.value > 0.05 ? vowelShape(f) : null });
         if (envelope.value > 0.15) voice.heardAt = performance.now();
         const level = Math.min(1, Math.sqrt(rms) * 4);
         voice.level = 0.8 * voice.level + 0.2 * level;
@@ -479,8 +495,11 @@ $('micBtn').addEventListener('click', async (e) => {
         onVoiceLevel(level);
         if (predictor) {
           predictor.calibrate = $('calib').checked;
+          const t2 = performance.now();
           values = predictor.push(mfcc, Number($('smooth').value));
+          latency.record('model', performance.now() - t2);
         }
+        pendingFrame = { soundAt, readyAt: performance.now() };
       },
     });
     features = createFeatureExtractor({ sampleRate: mic.sampleRate, fftSize: 1024 });
@@ -521,7 +540,7 @@ function visemeWeights() {
     oo: c(vowel.round * speaking),
     ee: c(0.9 * vowel.spread * speaking),
     ff: c(0.8 * vowel.fric * speaking),
-    smile: c(0.12 + 0.25 * anim.brow),
+    smile: c(0.12 + 0.25 * anim.brow + listenPose.smile),
   };
 }
 
@@ -627,8 +646,39 @@ canvas.addEventListener('pointerup', () => { drag = null; });
 canvas.addEventListener('dblclick', () => { yaw = pitch = 0; });
 
 const debugRows = $('debug');
+const NO_POSE = { roll: 0, yaw: 0, pitch: 0, brow: 0, smile: 0, gaze: null, label: '' };
+let listenPose = NO_POSE;
+const convState = $('convState');
+
+// Latency panel: one row per stage with typical (p50) and worst-case (p95) times, plus a bar.
+function showLatency() {
+  const box = $('latencyBox');
+  const e2e = latency.stats('end-to-end');
+  if (!e2e.n) { box.innerHTML = '<div class="latNote">Start the mic and talk to measure.</div>'; return; }
+  const ms = (v) => v == null ? '–' : v < 10 ? v.toFixed(1) : Math.round(v);
+  const max = Math.max(1, ...STAGES.map(([n]) => latency.stats(n).p50 ?? 0));
+  const rows = STAGES.map(([name, what]) => {
+    const st = latency.stats(name);
+    if (name === 'look-ahead' && !st.p50) return '';
+    return `<tr title="${what}"><td>${name}</td><td><div class="latBar" style="width:${Math.round(((st.p50 ?? 0) / max) * 100)}%"></div></td>` +
+      `<td>${ms(st.p50)}</td><td>${ms(st.p95)}</td></tr>`;
+  }).join('');
+  const compute = ['features', 'formants', 'model'].reduce((a, n) => a + (latency.stats(n).p50 ?? 0), 0);
+  const smooth = Number($('smooth').value);
+  const ease = smooth > 0.01 ? -(1000 / 30) / Math.log(smooth) : 0;
+  box.innerHTML =
+    `<div class="latHead">voice → face <b>${ms(e2e.p50)} ms</b> typical · ${ms(e2e.p95)} ms worst 5%</div>` +
+    `<table><tr><th>stage</th><th></th><th>p50</th><th>p95</th></tr>${rows}</table>` +
+    `<div class="latNote">Compute per audio frame: ${ms(compute)} ms of the 33 ms budget ` +
+    `(${compute < 33 ? '✅ fits' : '⚠️ over'}). Smoothing adds ~${Math.round(ease)} ms of easing on top. ` +
+    (latency.stats('look-ahead').p50 ? `Look-ahead only delays the mouth <i>shape</i>; the jaw opening follows loudness without waiting. ` : '') +
+    `Mic hardware and screen delay aren't visible to the browser, so aren't included.</div>`;
+}
 function frame(t) {
   requestAnimationFrame(frame);
+  const drawStart = performance.now();
+  const consumed = pendingFrame;
+  pendingFrame = null;
   if ((face && faceGeo && mouthParts) || toon) {
     const now = performance.now();
     const alive = $('alive').checked;
@@ -648,8 +698,22 @@ function frame(t) {
       pitch: pitch + idle * (0.025 * Math.sin(s * 0.31) - 0.08 * emphasis - 0.06 * env),
       roll: idle * (0.02 * Math.sin(s * 0.27) + 0.03 * anim.talk * Math.sin(s * 1.7)),
     };
+    // Listening behaviour: tilt and wait on hesitations, nod when you carry on or finish.
+    const listening = alive && $('listenMode').checked;
+    listenPose = listening ? listener.pose(now) : NO_POSE;
+    head.yaw += listenPose.yaw;
+    head.pitch += listenPose.pitch;
+    head.roll += listenPose.roll;
+    anim.brow = Math.max(anim.brow, listenPose.brow);
+    const label = listening ? listenPose.label : '';
+    if (convState.textContent !== label) { convState.textContent = label; convState.hidden = !label; }
+
     const blink = alive ? blinkAmount(now) : 0;
     if (alive) updateGlance(now); else { glance.x = glance.y = 0; }
+    if (listenPose.gaze) {
+      glance.x += (listenPose.gaze.x - glance.x) * 0.12;
+      glance.y += (listenPose.gaze.y - glance.y) * 0.12;
+    }
 
     if (toon) {
       // Cartoon mode: a real 3D rig, so every part just gets its value.
@@ -687,6 +751,17 @@ function frame(t) {
     if (handRoot) handRoot.rotation.z = alive || anim.waveStart >= 0 ? waveAngle(now) : 0;
   }
   renderer.render(scene, camera);
+
+  // ---- latency bookkeeping
+  const drawEnd = performance.now();
+  latency.record('draw', drawEnd - drawStart);
+  if (consumed) {
+    const lookAhead = predictor ? (predictor.meta.future ?? 0) * (1000 / 30) : 0;
+    latency.record('look-ahead', lookAhead);
+    latency.record('wait', drawStart - consumed.readyAt);
+    latency.record('end-to-end', drawEnd - consumed.soundAt + lookAhead);
+  }
+  if ($('showLatency').checked && drawEnd - (frame.latAt ?? 0) > 250) { frame.latAt = drawEnd; showLatency(); }
 
   if (voice.startedAt) {
     $('meter').style.width = Math.min(100, envelope.aboveFloor * 3.3) + '%';

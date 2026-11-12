@@ -32,6 +32,19 @@
     .toonbox .made { display: flex; gap: .6rem; align-items: center; color: #9aa3b5; font-size: .85rem; }
     .toonbox img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
     select { background: #222838; color: #eee; border: 1px solid #343c50; border-radius: 6px; padding: .25rem .4rem; }
+    .stage { position: relative; width: 520px; max-width: 100%; }
+    .stage #scene { width: 100%; }
+    #convState { position: absolute; left: 12px; bottom: 12px; background: rgba(15, 18, 26, .78); color: #e8ecf4;
+      font-size: .9rem; padding: .35rem .7rem; border-radius: 999px; pointer-events: none; }
+    .latBox { background: #1a1e28; border: 1px solid #2b3242; border-radius: 10px; padding: .6rem .8rem; margin: .4rem 0; font-size: .82rem; color: #c9d1e0; }
+    .latBox table { width: 100%; border-collapse: collapse; margin: .35rem 0; font-family: ui-monospace, monospace; }
+    .latBox th { text-align: left; color: #7f8aa3; font-weight: 500; }
+    .latBox td, .latBox th { padding: .12rem .3rem; }
+    .latBox td:nth-child(2) { width: 40%; }
+    .latBox td:nth-child(3), .latBox td:nth-child(4), .latBox th:nth-child(3), .latBox th:nth-child(4) { text-align: right; width: 3.2rem; }
+    .latBar { height: 8px; background: #4f8cff; border-radius: 4px; min-width: 2px; }
+    .latHead { font-size: .95rem; color: #eef2fa; }
+    .latNote { color: #8a93a6; font-size: .78rem; }
     #scene.dropping { outline: 3px dashed #4f8cff; outline-offset: 4px; }
     [hidden] { display: none !important; }
     ol.howto { color: #ddd; line-height: 1.7; padding-left: 1.3rem; margin: .25rem 0 .5rem; }
@@ -44,7 +57,7 @@
   <h1>Talk, and my Memoji lip-syncs with you</h1>
   <ol class="howto">
     <li>Click <b>🎙 Start mic</b> and allow microphone access.</li>
-    <li>Talk. The mouth follows your voice live. (It mirrors you; it doesn't speak on its own.)</li>
+    <li>Talk. The mouth follows your voice live. Pause or say "umm…" and it waits patiently; finish a sentence and it nods.</li>
     <li>Try <b>👋 Wave</b>, drag the face to turn it, or use your own front-facing photo.</li>
   </ol>
   <p class="note" style="max-width:760px">A small neural network I trained on my own voice shapes the mouth from the sound,
@@ -62,7 +75,7 @@
   </div>
 
   <div class="layout">
-    <canvas id="scene"></canvas>
+    <div class="stage"><canvas id="scene"></canvas><div id="convState" hidden></div></div>
     <div class="panel">
       <button id="micBtn" disabled>🎙 Start mic</button>
       <button id="waveBtn" disabled style="background:#333">👋 Wave</button>
@@ -88,8 +101,11 @@
       </div>
       <div class="ctrl" id="depthRow"><span>3D depth</span><input type="range" id="depth" min="0.3" max="1.6" step="0.1" value="1"></div>
       <div class="ctrl"><span>alive</span><label><input type="checkbox" id="alive" checked> blinks, brows, head motion</label></div>
+      <div class="ctrl"><span>listening</span><label><input type="checkbox" id="listenMode" checked> reacts to pauses, "umm" and when you finish</label></div>
       <div class="ctrl"><span>wave</span><label><input type="checkbox" id="autoWave" checked> when I start talking</label></div>
       <div class="ctrl"><span>mic calibration</span><label><input type="checkbox" id="calib"> experimental</label></div>
+      <div class="ctrl"><span>latency</span><label><input type="checkbox" id="showLatency"> show how fast each step is</label></div>
+      <div id="latencyBox" class="latBox" hidden></div>
       <div class="ctrl"><span>show predictions</span><input type="checkbox" id="showDebug"></div>
       <pre id="debug"></pre>
 

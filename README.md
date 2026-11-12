@@ -48,7 +48,23 @@
    eye colour; face shape; eye spacing; hair volume, length and curls; glasses; mustache) and builds a 3D
    cartoon head in Three.js: real eyeballs and eyelids, brows, a sculpted head, hair, glasses. Its mouth is drawn
    from the person's own lip outline and moves with the captured real-mouth motion, so anyone's cartoon talks
-   along with them. Wrong guesses (hair style, glasses) can be fixed with one click.
+   along with them. Like a caricature artist, it exaggerates what is distinctive about each face. The style
+   (feminine / masculine / neutral), hair and facial hair are the user's choice; the photo only suggests them,
+   and the page never guesses gender from a face.
+
+6. **Listening, not just mirroring.** From the same audio features, the avatar reads *how* you talk:
+   - **A hesitation pause** mid-sentence: it tilts its head, lifts its brows and looks up, waiting patiently.
+   - **"Umm" or "uhh"**, a steady, neutral, held sound (unlike a clear "ah", "ee" or "oo"): the same patient look.
+   - **Carrying on** after a hesitation: a small encouraging nod.
+   - **Finishing your turn**, a longer silence after you spoke: a double nod and a smile.
+
+   It is rule-based and adds no latency: a small hand-built version of what a conversational model would
+   learn end to end.
+
+7. **Measured, not guessed.** Tick "show how fast each step is" to see a live latency breakdown of the pipeline:
+   audio in → features (FFT + MFCC) → formants (LPC) → model → wait for the screen → draw, with p50 (typical)
+   and p95 (worst 5%) times and the end-to-end voice → face delay. Everything a frame needs must fit in the
+   33 ms tick, so the panel also shows how much of that budget the computation uses.
 
 Everything runs locally in the browser. No audio or photos are uploaded anywhere.
 
@@ -78,8 +94,10 @@ Everything runs locally in the browser. No audio or photos are uploaded anywhere
 | `src/visemes.js`, `src/capture.js` | Real-mouth motion capture: similarity alignment, eye-distance normalisation, retargeting to any face |
 | `src/formants.js` | LPC formant tracking (F1/F2) → open / round / spread mouth shapes, on any mic |
 | `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
-| `src/toon-analyze.js` | Photo → cartoon traits: colour sampling, proportions, hair volume/length/curl, glasses and mustache detection |
+| `src/toon-analyze.js` | Photo → cartoon traits: colour sampling, proportions, hair volume/length/curl, glasses and facial-hair detection (both sides of the face must agree, so shadows don't count) |
 | `src/toon-head.js` | The 3D cartoon rig: head, eyes with lids, brows, hair styles, glasses, and a lip-shaped animated mouth |
+| `src/latency.js` | Live latency breakdown: times every stage (audio in, features, formants, model, wait, draw) and reports p50/p95 and end-to-end voice → face |
+| `src/listening.js` | Listener behaviour: detects hesitation pauses, "umm" fillers and the end of a turn, and reacts with tilts and nods |
 | `src/avatar.js` | Puts it all together in Three.js |
 | `src/main.js`, `src/face.js` | Page scripts for `audio.html` (live audio visualisations) and `face.html` (face tracking) |
 
