@@ -24,6 +24,7 @@ import { createFormantTracker, vowelShape } from './formants.js';
 import { createListener } from './listening.js';
 import { createLatencyMeter, STAGES } from './latency.js';
 import { createTalker, defaultModel } from './talk.js';
+import { createSeer } from './seeing.js';
 
 const tf = window.tf;
 const $ = (id) => document.getElementById(id);
@@ -583,7 +584,7 @@ function visemeWeights() {
     oo: c(mix ? blend('oo') : rule.oo),
     ee: c(mix ? blend('ee') : rule.ee),
     ff: c(0.8 * src.fric * speaking),
-    smile: c(0.12 + 0.25 * anim.brow + listenPose.smile),
+    smile: c(0.12 + 0.25 * anim.brow + listenPose.smile + (seePose?.smile ?? 0)),
   };
 }
 
@@ -692,6 +693,16 @@ canvas.addEventListener('dblclick', () => { yaw = pitch = 0; });
 const debugRows = $('debug');
 const NO_POSE = { roll: 0, yaw: 0, pitch: 0, brow: 0, smile: 0, gaze: null, label: '' };
 let listenPose = NO_POSE;
+const seer = createSeer($('seeVideo'));
+let seePose = null;
+$('seeMode').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    await seer.start();
+    if (seer.state.error) { e.target.checked = false; $('seeStatus').textContent = '⚠️ ' + seer.state.error; }
+    else $('seeStatus').textContent = '';
+  } else seer.stop();
+  $('seeVideo').hidden = !seer.state.on;
+});
 // While the AI is thinking: eyes up and to the side, a slight tilt.
 const THINK_POSE = { roll: 0.06, yaw: -0.04, pitch: -0.03, brow: 0.3, smile: 0.1, gaze: { x: -0.5, y: -0.6 }, label: '' };
 
@@ -707,7 +718,11 @@ function speakingCues(seconds, text) {
     if (c.pause) parts.push(`${c.pause} hesitation pause${c.pause > 1 ? 's' : ''}`);
     if (!c.umm && !c.pause) parts.push('no hesitation');
   }
-  return parts.length ? `[how they spoke: ${parts.join(', ')}]` : '';
+  const saw = seer.takeNotes();
+  const notes = [];
+  if (parts.length) notes.push(`[how they spoke: ${parts.join(', ')}]`);
+  if (saw.length) notes.push(`[what you saw on their face while they spoke: they ${saw.join(', ')}]`);
+  return notes.join(' ');
 }
 const talker = createTalker({ getCues: speakingCues, onUpdate: renderTalk });
 Object.defineProperty(talker, 'busy', { get: () => ['thinking', 'speaking'].includes(talker.state.state) });
@@ -823,15 +838,28 @@ function frame(t) {
     head.pitch += listenPose.pitch;
     head.roll += listenPose.roll;
     anim.brow = Math.max(anim.brow, listenPose.brow);
+
+    // Seeing you: eye contact, and reactions to your expression (when the webcam is on).
+    seer.tick(now);
+    seePose = alive ? seer.pose() : null;
+    if (seePose) {
+      head.yaw += seePose.yaw;
+      head.pitch += seePose.pitch;
+      if (!listenPose.roll) head.roll += seePose.roll;
+      anim.brow = Math.max(anim.brow, seePose.brow);
+    }
     const label = talkState === 'thinking' ? '🤔 thinking…' : talkState === 'speaking' ? '🗣 speaking (talk to interrupt)'
-      : listening ? listenPose.label : '';
+      : (listening && listenPose.label) || seePose?.label || '';
     if (convState.textContent !== label) { convState.textContent = label; convState.hidden = !label; }
 
     const blink = alive ? blinkAmount(now) : 0;
     if (alive) updateGlance(now); else { glance.x = glance.y = 0; }
-    if (listenPose.gaze) {
-      glance.x += (listenPose.gaze.x - glance.x) * 0.12;
-      glance.y += (listenPose.gaze.y - glance.y) * 0.12;
+    // Gaze priority: "thinking" look > eye contact with you > its own idle glances.
+    const gaze = listenPose.gaze ?? (seePose && talkState !== 'thinking' ? seePose.gaze : null);
+    if (gaze) {
+      const k = listenPose.gaze ? 0.12 : 0.2;
+      glance.x += (gaze.x - glance.x) * k;
+      glance.y += (gaze.y - glance.y) * k;
     }
 
     if (toon) {

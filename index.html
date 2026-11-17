@@ -60,6 +60,7 @@
     .mixRow { display: flex; align-items: center; gap: .4rem; }
     .mixRow input { flex: 1; }
     .mixRow small { color: #8a93a6; }
+    #seeVideo { position: absolute; right: 10px; bottom: 10px; width: 96px; border-radius: 8px; transform: scaleX(-1); border: 2px solid #4f8cff; opacity: .9; }
     #scene.dropping { outline: 3px dashed #4f8cff; outline-offset: 4px; }
     [hidden] { display: none !important; }
     ol.howto { color: #ddd; line-height: 1.7; padding-left: 1.3rem; margin: .25rem 0 .5rem; }
@@ -107,7 +108,8 @@
   </div>
 
   <div class="layout">
-    <div class="stage"><canvas id="scene"></canvas><div id="convState" hidden></div></div>
+    <div class="stage"><canvas id="scene"></canvas><div id="convState" hidden></div>
+      <video id="seeVideo" hidden playsinline muted title="your camera: only analysed on this computer"></video></div>
     <div class="panel">
       <button id="micBtn" disabled>🎙 Start mic</button>
       <button id="waveBtn" disabled style="background:#333">👋 Wave</button>
@@ -134,6 +136,7 @@
       </div>
       <div class="ctrl" id="depthRow"><span>3D depth</span><input type="range" id="depth" min="0.3" max="1.6" step="0.1" value="1"></div>
       <div class="ctrl"><span>alive</span><label><input type="checkbox" id="alive" checked> blinks, brows, head motion</label></div>
+      <div class="ctrl"><span>see me</span><label><input type="checkbox" id="seeMode"> 👀 use my webcam: eye contact, smiles back, notices if I look unsure <span id="seeStatus" class="latNote"></span></label></div>
       <div class="ctrl"><span>listening</span><label><input type="checkbox" id="listenMode" checked> reacts to pauses, "umm" and when you finish</label></div>
       <div class="ctrl"><span>wave</span><label><input type="checkbox" id="autoWave" checked> when I start talking</label></div>
       <div class="ctrl"><span>mic calibration</span><label><input type="checkbox" id="calib"> experimental</label></div>

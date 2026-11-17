@@ -84,6 +84,13 @@
    of look-ahead, so 1 frame (33 ms) is the sweet spot. The "mouth driven by" slider blends the
    model's predictions with the loudness + formant rules, so you can compare them live.
 
+10. **It sees you, too.** Tick "see me" and the webcam joins the microphone: MediaPipe reads your face
+    about 15 times a second. The Memoji keeps eye contact as you move, smiles back when you smile,
+    tilts its head with a concerned look when your brows pull down, raises its brows when you look
+    surprised, and waits when you look away. In talk mode it also tells the AI what it saw ("they smiled",
+    "they looked unsure"), so replies respond to your face as well as your words: audio + video in,
+    like a (much smaller, rule-based) multimodal model. The video never leaves your computer.
+
 Everything runs locally in the browser. No audio or photos are uploaded anywhere.
 
 ## Pages
@@ -115,6 +122,7 @@ Everything runs locally in the browser. No audio or photos are uploaded anywhere
 | `src/toon-analyze.js` | Photo → cartoon traits: colour sampling, proportions, hair volume/length/curl, glasses and facial-hair detection (both sides of the face must agree, so shadows don't count) |
 | `src/toon-head.js` | The 3D cartoon rig: head, eyes with lids, brows, hair styles, glasses, and a lip-shaped animated mouth |
 | `pytorch/` | The same model trained in **PyTorch**: dataset port verified against the browser, training, export to the browser's format, a look-ahead vs accuracy sweep, ONNX benchmark ([details](pytorch/README.md)) |
+| `src/seeing.js` | Webcam reading: eye contact, smiles back, notices when you look unsure, surprised or away, and tells the AI what it saw |
 | `src/talk.js` | Conversation mode: speech recognition → streaming LLM (OpenAI or Claude) → sentence-by-sentence speech, mouth driven by its own words, barge-in |
 | `src/latency.js` | Live latency breakdown: times every stage (audio in, features, formants, model, wait, draw) and reports p50/p95 and end-to-end voice → face |
 | `src/listening.js` | Listener behaviour: detects hesitation pauses, "umm" fillers and the end of a turn, and reacts with tilts and nods |
