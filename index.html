@@ -45,6 +45,21 @@
     .latBar { height: 8px; background: #4f8cff; border-radius: 4px; min-width: 2px; }
     .latHead { font-size: .95rem; color: #eef2fa; }
     .latNote { color: #8a93a6; font-size: .78rem; }
+    .talkbox { background: #1a1e28; border: 1px solid #2b3242; border-radius: 12px; padding: .8rem 1rem; margin: .5rem 0 1rem; color: #cfd6e4; font-size: .92rem; }
+    .talkbox .beta { background: #4f8cff; color: #fff; border-radius: 6px; padding: 0 .4rem; font-size: .75rem; }
+    .talkrow { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .6rem 0 .3rem; }
+    .talkrow input[type=text], .talkrow input[type=password] { background: #222838; color: #eee; border: 1px solid #343c50; border-radius: 6px; padding: .45rem .55rem; }
+    #talkKey { flex: 1; min-width: 12rem; }
+    #talkModel { width: 9rem; }
+    #talkVoice { max-width: 14rem; }
+    .talkbox .hint { color: #8a93a6; font-size: .8rem; margin-top: .3rem; }
+    .talklog { margin-top: .4rem; max-height: 11rem; overflow-y: auto; }
+    .talklog .msg { padding: .25rem 0; border-bottom: 1px solid #252b39; }
+    .talklog .msg.memoji b { color: #8ab4ff; }
+    .talklog .msg.you b { color: #9fe0b0; }
+    .mixRow { display: flex; align-items: center; gap: .4rem; }
+    .mixRow input { flex: 1; }
+    .mixRow small { color: #8a93a6; }
     #scene.dropping { outline: 3px dashed #4f8cff; outline-offset: 4px; }
     [hidden] { display: none !important; }
     ol.howto { color: #ddd; line-height: 1.7; padding-left: 1.3rem; margin: .25rem 0 .5rem; }
@@ -74,6 +89,23 @@
     <div class="selfie"><video id="selfieVideo" hidden playsinline muted></video><span id="selfieCount"></span></div>
   </div>
 
+  <div class="talkbox">
+    <div><b>💬 Talk with the Memoji</b> <span class="beta">beta</span>: have a real spoken conversation. It listens, thinks with an AI model, and answers out loud.</div>
+    <div class="talkrow">
+      <select id="talkProvider"><option value="openai">OpenAI</option><option value="anthropic">Claude</option></select>
+      <input id="talkKey" type="password" placeholder="paste your API key" autocomplete="off" spellcheck="false">
+      <input id="talkModel" type="text" autocomplete="off" spellcheck="false" title="model (leave empty for the default)">
+      <select id="talkVoice" title="voice"></select>
+      <button id="talkBtn">▶ Start talking</button>
+    </div>
+    <label class="mode"><input type="checkbox" id="talkRemember"> remember my key on this device</label>
+    <div class="hint">Your key goes only from your browser to the provider you pick; it's never sent anywhere else.
+      Speech recognition uses your browser's built-in service (in Chrome, Google processes the audio).
+      Works best in Chrome or Edge, with headphones, so it doesn't hear its own voice.</div>
+    <div id="talkStatus" class="status"></div>
+    <div id="talkLog" class="talklog"></div>
+  </div>
+
   <div class="layout">
     <div class="stage"><canvas id="scene"></canvas><div id="convState" hidden></div></div>
     <div class="panel">
@@ -85,6 +117,7 @@
       <div class="status" id="status">loading…</div>
 
       <div class="ctrl"><span>expressiveness</span><input type="range" id="gain" min="0.8" max="3" step="0.1" value="1.6"></div>
+      <div class="ctrl" title="0 = loudness + formant rules only, 1 = the trained neural network only"><span>mouth driven by</span><div class="mixRow"><small>rules</small><input type="range" id="modelMix" min="0" max="1" step="0.05" value="0.5"><small>AI model</small></div></div>
       <div class="ctrl"><span>smoothing</span><input type="range" id="smooth" min="0" max="0.85" step="0.05" value="0.45"></div>
       <div id="toonControls" class="toonbox" hidden>
         <div class="made"><img id="sourceThumb" alt="the photo this cartoon was made from"><span>Made from this photo. Pick the style, and fix any wrong guess:</span></div>

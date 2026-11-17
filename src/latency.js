@@ -40,7 +40,7 @@ export function createLatencyMeter({ keep = 300 } = {}) {
 }
 
 export const STAGES = [
-  ['audio in', 'mic buffer → JavaScript (incl. half the 21 ms window)'],
+  ['audio in', 'half the 21 ms window + browser audio buffering (+ mic latency if reported)'],
   ['features', 'FFT + mel filterbank + MFCC'],
   ['formants', 'LPC vowel tracking'],
   ['model', 'neural network (TensorFlow.js)'],

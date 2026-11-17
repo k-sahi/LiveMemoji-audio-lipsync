@@ -34,7 +34,9 @@ export function createListener() {
   const nod = (now, count = 1, amp = 0.08) => {
     for (let i = 0; i < count; i++) s.nods.push({ start: now + i * 360, amp: amp * (i ? 0.7 : 1) });
   };
+  const counts = { umm: 0, pause: 0 };   // per turn, for the conversation mode
   const startHesitation = (kind) => {
+    counts[kind] = (counts[kind] ?? 0) + 1;
     if (s.hesTarget === 0) s.tilt = Math.random() < 0.5 ? -1 : 1;   // tilt to a random side each time
     s.hesTarget = 1;
     s.kind = kind;
@@ -93,6 +95,13 @@ export function createListener() {
           s.phase = 'idle'; s.kind = '';
         }
       }
+    },
+
+    /** How many "umm"s and hesitation pauses since the last call (then starts counting again). */
+    takeCounts() {
+      const out = { ...counts };
+      counts.umm = 0; counts.pause = 0;
+      return out;
     },
 
     /** The listener's body language right now, to add on top of the normal animation. */

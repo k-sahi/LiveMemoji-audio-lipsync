@@ -66,6 +66,24 @@
    and p95 (worst 5%) times and the end-to-end voice → face delay. Everything a frame needs must fit in the
    33 ms tick, so the panel also shows how much of that budget the computation uses.
 
+8. **It talks back.** In "Talk with the Memoji", paste your own OpenAI or Claude API key and just talk:
+   - speech recognition turns your words into text, and a note about *how* you spoke (pace, pauses, "umm"s, from
+     the listening module) goes along with them, so replies can respond to hesitation, not just words;
+   - the reply is **streamed**, and each sentence is spoken as soon as it's complete, so it starts talking before
+     the whole answer exists; the page shows how long after you stopped it began replying;
+   - while it speaks, its mouth is driven from its own words; **start talking to interrupt it (barge-in)**, and it
+     stops mid-sentence and listens.
+
+   Your key goes only from your browser to the provider you pick. Speech recognition uses the browser's built-in
+   service (in Chrome, Google processes that audio). Headphones work best.
+
+9. **Also trained in PyTorch.** The `pytorch/` folder ports the dataset and model to Python, checks
+   they match the browser exactly (same windows, same normalisation, same R² 0.576 for the existing
+   model), and exports PyTorch models in the format the demo loads. Its sweep asks whether the
+   model's 67 ms look-ahead is worth the delay: overall accuracy is flat, but the jaw needs one frame
+   of look-ahead, so 1 frame (33 ms) is the sweet spot. The "mouth driven by" slider blends the
+   model's predictions with the loudness + formant rules, so you can compare them live.
+
 Everything runs locally in the browser. No audio or photos are uploaded anywhere.
 
 ## Pages
@@ -96,6 +114,8 @@ Everything runs locally in the browser. No audio or photos are uploaded anywhere
 | `src/voice-envelope.js` | Jaw opening from loudness, relative to each mic's own noise floor and peaks |
 | `src/toon-analyze.js` | Photo → cartoon traits: colour sampling, proportions, hair volume/length/curl, glasses and facial-hair detection (both sides of the face must agree, so shadows don't count) |
 | `src/toon-head.js` | The 3D cartoon rig: head, eyes with lids, brows, hair styles, glasses, and a lip-shaped animated mouth |
+| `pytorch/` | The same model trained in **PyTorch**: dataset port verified against the browser, training, export to the browser's format, a look-ahead vs accuracy sweep, ONNX benchmark ([details](pytorch/README.md)) |
+| `src/talk.js` | Conversation mode: speech recognition → streaming LLM (OpenAI or Claude) → sentence-by-sentence speech, mouth driven by its own words, barge-in |
 | `src/latency.js` | Live latency breakdown: times every stage (audio in, features, formants, model, wait, draw) and reports p50/p95 and end-to-end voice → face |
 | `src/listening.js` | Listener behaviour: detects hesitation pauses, "umm" fillers and the end of a turn, and reacts with tilts and nods |
 | `src/avatar.js` | Puts it all together in Three.js |

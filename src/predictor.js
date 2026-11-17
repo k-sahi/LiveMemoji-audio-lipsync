@@ -34,16 +34,22 @@ export class Predictor {
   /** 0..1, how much of the first few seconds of calibration is done. */
   get calibration() { return Math.min(1, this.liveFrames / 90); }
 
-  /** Load from the browser (just trained) first, then from the repo's model/ folder. */
+  /**
+   * Load the NEWEST available model: one trained in this browser (train.html) or the file in the
+   * repo's model/ folder (which may come from the PyTorch pipeline). Newest = latest `trainedAt`.
+   */
   static async load(tf, sources = [MODEL_KEY, MODEL_URL]) {
+    let best = null;
     for (const src of sources) {
       try {
         const model = src.startsWith('indexeddb://') ? await tf.loadLayersModel(src) : await loadModelFile(tf, src);
         const meta = model.getUserDefinedMetadata?.();
-        if (meta && meta.targetNames) return { predictor: new Predictor(tf, model, meta), source: src };
+        if (!meta || !meta.targetNames) continue;
+        const when = Date.parse(meta.trainedAt ?? '') || 0;
+        if (!best || when > best.when) best = { predictor: new Predictor(tf, model, meta), source: src, when };
       } catch { /* not there, try the next source */ }
     }
-    return null;
+    return best && { predictor: best.predictor, source: best.source };
   }
 
   /**

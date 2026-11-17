@@ -1,2 +1,7 @@
 # Raw recordings (your voice features + face data) stay on your computer, not on GitHub.
 data/
+
+# Python caches and large model binaries from the PyTorch pipeline (the .json models are kept)
+__pycache__/
+pytorch/out/*.pt
+pytorch/out/*.onnx

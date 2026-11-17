@@ -23,6 +23,7 @@ import { createVoiceEnvelope } from './voice-envelope.js';
 import { createFormantTracker, vowelShape } from './formants.js';
 import { createListener } from './listening.js';
 import { createLatencyMeter, STAGES } from './latency.js';
+import { createTalker, defaultModel } from './talk.js';
 
 const tf = window.tf;
 const $ = (id) => document.getElementById(id);
@@ -65,7 +66,8 @@ const voice = { level: 0, fast: 0, slow: 0, lastLoudAt: 0, talking: false, heard
 const envelope = createVoiceEnvelope();
 const listener = createListener();
 const latency = createLatencyMeter();   // per-stage timing of voice → face
-let pendingFrame = null;                   // the newest audio result, waiting to be drawn   // reacts to pauses, "umm" and the end of your turn
+let pendingFrame = null;                   // the newest audio result, waiting to be drawn
+let micInputMs = 0;                        // mic/driver latency, when the browser reports it   // reacts to pauses, "umm" and the end of your turn
 let formants = null;
 const vowel = { open: 0, round: 0, spread: 0, fric: 0, voiced: false }; // smoothed mouth shape from formants
 let visemeFile = null;   // captured real-mouth motion (capture.html), if available
@@ -459,7 +461,8 @@ async function loadModel() {
     return;
   }
   predictor = found.predictor;
-  const where = found.source.startsWith('indexeddb') ? 'trained in this browser' : 'from model/ folder';
+  const where = found.source.startsWith('indexeddb') ? 'trained in this browser'
+    : found.predictor.meta.trainedWith === 'pytorch' ? 'trained in PyTorch' : 'from model/ folder';
   $('modelInfo').textContent = `model: ${where} | score ${predictor.meta.valR2} | ` +
     `trained ${new Date(predictor.meta.trainedAt).toLocaleDateString()}`;
   $('micBtn').disabled = false;
@@ -474,10 +477,14 @@ $('micBtn').addEventListener('click', async (e) => {
       windowSize: 1024,
       onFrame: (samples, endFrame) => {
         if (!features) return;
-        // When was this sound actually made? The middle of the 1024-sample window.
+        // When was this sound actually made? Count back from now:
+        //   how long ago the frame's last sample entered the audio graph (browser buffering + message hop),
+        //   + half the 1024-sample window (its middle is "the sound"),
+        //   + the mic's own input latency, if the browser reports it.
         const t0 = performance.now();
         const halfWindow = (samples.length / 2 / mic.sampleRate) * 1000;
-        const soundAt = mic.audioFrameToPerfTime(endFrame) - halfWindow;
+        const buffered = Math.max(0, (mic.ctx.currentTime - endFrame / mic.sampleRate) * 1000);
+        const soundAt = t0 - buffered - halfWindow - micInputMs;
         latency.record('audio in', t0 - soundAt);
         const { mfcc, rms } = features.compute(samples);
         const t1 = performance.now();
@@ -486,7 +493,7 @@ $('micBtn').addEventListener('click', async (e) => {
         const f = formants.analyze(samples);
         latency.record('formants', performance.now() - t1);
         updateVowel(f);
-        listener.hear({ now: performance.now(), loud: envelope.value > 0.15, shape: f && envelope.value > 0.05 ? vowelShape(f) : null });
+        if (!talker.busy) listener.hear({ now: performance.now(), loud: envelope.value > 0.15, shape: f && envelope.value > 0.05 ? vowelShape(f) : null });
         if (envelope.value > 0.15) voice.heardAt = performance.now();
         const level = Math.min(1, Math.sqrt(rms) * 4);
         voice.level = 0.8 * voice.level + 0.2 * level;
@@ -502,6 +509,7 @@ $('micBtn').addEventListener('click', async (e) => {
         pendingFrame = { soundAt, readyAt: performance.now() };
       },
     });
+    micInputMs = (mic.stream.getAudioTracks()[0]?.getSettings?.().latency ?? 0) * 1000;
     features = createFeatureExtractor({ sampleRate: mic.sampleRate, fftSize: 1024 });
     formants = createFormantTracker(mic.sampleRate);
     e.target.textContent = '🎙 Listening';
@@ -530,16 +538,51 @@ function updateVowel(f) {
 }
 
 // How much of each captured real-mouth shape to use right now.
+// What drives the mouth: your voice through the mic, or, while the Memoji is talking, its own words.
+function mouthSource() {
+  return talker.mouth(performance.now()) ??
+    { env: envelope.value, open: vowel.open, round: vowel.round, spread: vowel.spread, fric: vowel.fric, mic: true };
+}
+
+// The trained model's blendshapes, rescaled to 0..1 mouth-shape weights.
+// Each blendshape has its own typical range in the recordings (median → 95th percentile),
+// e.g. jawOpen 0.035 → 0.44, so raw values would barely move the mouth.
+const MODEL_RANGE = {
+  jawOpen: [0.035, 0.44], mouthFunnel: [0.055, 0.31], mouthPucker: [0.048, 0.99],
+  mouthStretchLeft: [0.006, 0.1], mouthStretchRight: [0.023, 0.24],
+};
+function modelVisemes() {
+  if (!values || !predictor) return null;
+  const v = (n) => { const [lo, hi] = MODEL_RANGE[n]; return clamp((predictor.get(values, n) - lo) / (hi - lo), 0, 1.3); };
+  return {
+    ah: v('jawOpen'),
+    oo: Math.max(v('mouthFunnel'), 0.6 * v('mouthPucker')),
+    ee: (v('mouthStretchLeft') + v('mouthStretchRight')) / 2,
+  };
+}
+
 function visemeWeights() {
-  const env = envelope.value;
+  const src = mouthSource();
+  const env = src.env;
   const speaking = Math.min(1, env / 0.12);
   const k = gain() / 1.6; // the expressiveness slider (1.6 = default)
   const c = (v) => Math.min(1.2, Math.max(0, v * k));
+  // Rules (loudness + formants) and the trained model, blended by the "mouth driven by" slider.
+  // The model only knows the mic's voice, so it's off while the Memoji talks.
+  const rule = {
+    ah: Math.pow(env, 0.75) * (0.15 + 0.85 * src.open),
+    oo: src.round * speaking,
+    ee: 0.9 * src.spread * speaking,
+  };
+  const m = src.mic ? modelVisemes() : null;
+  const mix = m ? Number($('modelMix').value) : 0;
+  const blend = (key) => (1 - mix) * rule[key] + mix * m[key] * speaking;
   return {
-    ah: c(Math.pow(env, 0.75) * (0.15 + 0.85 * vowel.open)),
-    oo: c(vowel.round * speaking),
-    ee: c(0.9 * vowel.spread * speaking),
-    ff: c(0.8 * vowel.fric * speaking),
+    // Jaw: never less than loudness says, so it stays instant even though the model looks ahead.
+    ah: c(mix ? Math.max(blend('ah'), rule.ah * 0.7) : rule.ah),
+    oo: c(mix ? blend('oo') : rule.oo),
+    ee: c(mix ? blend('ee') : rule.ee),
+    ff: c(0.8 * src.fric * speaking),
     smile: c(0.12 + 0.25 * anim.brow + listenPose.smile),
   };
 }
@@ -566,7 +609,7 @@ function onVoiceLevel(level) {
   const now = performance.now();
   const loud = envelope.value > 0.15; // relative to this mic's own background level, so it works on quiet mics too
   if (loud) {
-    if (!voice.talking && now - voice.lastLoudAt > 2500 && $('autoWave').checked) startWave(1.6);
+    if (!voice.talking && now - voice.lastLoudAt > 2500 && $('autoWave').checked && !talker.busy) startWave(1.6);
     voice.talking = true;
     voice.lastLoudAt = now;
   } else if (now - voice.lastLoudAt > 400) {
@@ -617,13 +660,14 @@ const names = () => predictor?.meta.targetNames ?? [];
 // so on its own the mouth barely moved for other people.
 const OPENING = new Set(['jawOpen', 'mouthLowerDownLeft', 'mouthLowerDownRight']);
 function blendshape(name) {
-  const env = envelope.value;
-  const i = values ? names().indexOf(name) : -1;
+  const src = mouthSource();
+  const env = src.env;
+  const i = values && src.mic ? names().indexOf(name) : -1;   // the model only knows the mic's voice
   const model = i < 0 ? 0 : values[i] * gain();
   const speaking = Math.min(1, env / 0.12);              // 0 in silence, 1 once clearly talking
   // How far it opens: loudness × how open the vowel is ("ah" wide, "ee"/"oo" small).
-  const open = Math.pow(env, 0.75) * (0.22 + 0.65 * vowel.open);
-  const round = vowel.round * speaking, spread = vowel.spread * speaking;
+  const open = Math.pow(env, 0.75) * (0.22 + 0.65 * src.open);
+  const round = src.round * speaking, spread = src.spread * speaking;
   if (name === 'jawOpen') return Math.min(1, Math.max(model * speaking * 0.5, open));
   if (OPENING.has(name)) return Math.min(1, Math.max(model * speaking * 0.5, 0.45 * open));
   if (name === 'mouthUpperUpLeft' || name === 'mouthUpperUpRight') return Math.min(1, Math.max(model * speaking, 0.3 * open));
@@ -648,12 +692,82 @@ canvas.addEventListener('dblclick', () => { yaw = pitch = 0; });
 const debugRows = $('debug');
 const NO_POSE = { roll: 0, yaw: 0, pitch: 0, brow: 0, smile: 0, gaze: null, label: '' };
 let listenPose = NO_POSE;
+// While the AI is thinking: eyes up and to the side, a slight tilt.
+const THINK_POSE = { roll: 0.06, yaw: -0.04, pitch: -0.03, brow: 0.3, smile: 0.1, gaze: { x: -0.5, y: -0.6 }, label: '' };
+
+// ---- Conversation mode -------------------------------------------------------------------
+// How you spoke this turn, as a short note for the AI (it's told to use it gently, never quote it).
+function speakingCues(seconds, text) {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const c = listener.takeCounts();
+  const parts = [];
+  if (seconds > 1.5) parts.push(`~${Math.round((words / seconds) * 60)} words/min`);
+  if (voice.startedAt) {
+    if (c.umm) parts.push(`${c.umm} "umm"${c.umm > 1 ? 's' : ''}`);
+    if (c.pause) parts.push(`${c.pause} hesitation pause${c.pause > 1 ? 's' : ''}`);
+    if (!c.umm && !c.pause) parts.push('no hesitation');
+  }
+  return parts.length ? `[how they spoke: ${parts.join(', ')}]` : '';
+}
+const talker = createTalker({ getCues: speakingCues, onUpdate: renderTalk });
+Object.defineProperty(talker, 'busy', { get: () => ['thinking', 'speaking'].includes(talker.state.state) });
+
+function renderTalk(st) {
+  $('talkBtn').textContent = st.active ? '⏹ Stop talking' : '▶ Start talking';
+  const line = st.error ? '⚠️ ' + st.error
+    : st.state === 'listening' ? '👂 Listening, just talk.' + (st.interim || st.heard ? ` <i>"${esc((st.heard + ' ' + st.interim).trim())}"</i>` : '')
+    : st.state === 'thinking' ? '🤔 Thinking…'
+    : st.state === 'speaking' ? '🗣 Speaking. Start talking to interrupt.' : '';
+  const t = st.timing;
+  const speed = t?.firstSound
+    ? `<br>⚡ Started replying <b>${((t.firstSound - t.userEnd) / 1000).toFixed(1)} s</b> after you finished ` +
+      `(AI's first words ${Math.round(t.firstToken - t.userEnd)} ms, voice ${Math.round(t.firstSound - t.firstToken)} ms).`
+    : '';
+  $('talkStatus').innerHTML = line + speed;
+  $('talkLog').innerHTML = st.transcript.slice(-6)
+    .map((m) => `<div class="msg ${m.who}"><b>${m.who === 'you' ? 'You' : 'Memoji'}:</b> ${esc(m.text)}</div>`).join('');
+}
+const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+// Voices: prefer natural-sounding English ones.
+function loadVoices() {
+  const vs = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'));
+  if (!vs.length) return;
+  const sel = $('talkVoice');
+  const keep = sel.value;
+  sel.innerHTML = vs.map((v) => `<option>${esc(v.name)}</option>`).join('');
+  const best = vs.find((v) => /natural|aria|jenny|samantha|google us english|zira/i.test(v.name)) ?? vs[0];
+  sel.value = vs.some((v) => v.name === keep) ? keep : best.name;
+}
+if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+
+// Remembered settings (only if the visitor asked us to remember them).
+try {
+  const saved = JSON.parse(localStorage.getItem('lipsync.talk') ?? 'null');
+  if (saved) { $('talkProvider').value = saved.provider; $('talkKey').value = saved.key; $('talkRemember').checked = true; }
+} catch {}
+$('talkProvider').addEventListener('change', () => { $('talkModel').placeholder = defaultModel($('talkProvider').value); });
+$('talkModel').placeholder = defaultModel($('talkProvider').value);
+
+$('talkBtn').addEventListener('click', () => {
+  if (talker.state.active) { talker.stop(); return; }
+  const provider = $('talkProvider').value, key = $('talkKey').value.trim();
+  if (!key) { talker.state.error = 'Paste an API key first.'; renderTalk(talker.state); return; }
+  try {
+    if ($('talkRemember').checked) localStorage.setItem('lipsync.talk', JSON.stringify({ provider, key }));
+    else localStorage.removeItem('lipsync.talk');
+  } catch {}
+  // The mic also feeds the "how you spoke" notes (pauses, umms), so start it too.
+  if (!voice.startedAt && !$('micBtn').disabled) $('micBtn').click();
+  const voiceObj = speechSynthesis.getVoices().find((v) => v.name === $('talkVoice').value) ?? null;
+  talker.start({ provider, key, model: $('talkModel').value.trim(), voice: voiceObj });
+});
 const convState = $('convState');
 
 // Latency panel: one row per stage with typical (p50) and worst-case (p95) times, plus a bar.
 function showLatency() {
   const box = $('latencyBox');
-  const e2e = latency.stats('end-to-end');
+  const e2e = latency.stats('voice → jaw'), shape = latency.stats('voice → shape');
   if (!e2e.n) { box.innerHTML = '<div class="latNote">Start the mic and talk to measure.</div>'; return; }
   const ms = (v) => v == null ? '–' : v < 10 ? v.toFixed(1) : Math.round(v);
   const max = Math.max(1, ...STAGES.map(([n]) => latency.stats(n).p50 ?? 0));
@@ -667,12 +781,14 @@ function showLatency() {
   const smooth = Number($('smooth').value);
   const ease = smooth > 0.01 ? -(1000 / 30) / Math.log(smooth) : 0;
   box.innerHTML =
-    `<div class="latHead">voice → face <b>${ms(e2e.p50)} ms</b> typical · ${ms(e2e.p95)} ms worst 5%</div>` +
+    `<div class="latHead">voice → jaw <b>${ms(e2e.p50)} ms</b> · voice → mouth shape <b>${ms(shape.p50)} ms</b></div>` +
+    `<div class="latNote">typical (p50); worst 5% (p95): ${ms(e2e.p95)} ms / ${ms(shape.p95)} ms</div>` +
     `<table><tr><th>stage</th><th></th><th>p50</th><th>p95</th></tr>${rows}</table>` +
     `<div class="latNote">Compute per audio frame: ${ms(compute)} ms of the 33 ms budget ` +
     `(${compute < 33 ? '✅ fits' : '⚠️ over'}). Smoothing adds ~${Math.round(ease)} ms of easing on top. ` +
     (latency.stats('look-ahead').p50 ? `Look-ahead only delays the mouth <i>shape</i>; the jaw opening follows loudness without waiting. ` : '') +
-    `Mic hardware and screen delay aren't visible to the browser, so aren't included.</div>`;
+    (micInputMs ? `Includes ${ms(micInputMs)} ms of mic latency reported by the browser. ` : `The mic's own hardware delay isn't reported by this browser, so isn't included. `) +
+    `The screen's own delay isn't visible to the browser.</div>`;
 }
 function frame(t) {
   requestAnimationFrame(frame);
@@ -700,12 +816,15 @@ function frame(t) {
     };
     // Listening behaviour: tilt and wait on hesitations, nod when you carry on or finish.
     const listening = alive && $('listenMode').checked;
-    listenPose = listening ? listener.pose(now) : NO_POSE;
+    const talkState = talker.state.state;
+    listenPose = talkState === 'thinking' ? THINK_POSE : talkState === 'speaking' ? NO_POSE
+      : listening ? listener.pose(now) : NO_POSE;
     head.yaw += listenPose.yaw;
     head.pitch += listenPose.pitch;
     head.roll += listenPose.roll;
     anim.brow = Math.max(anim.brow, listenPose.brow);
-    const label = listening ? listenPose.label : '';
+    const label = talkState === 'thinking' ? '🤔 thinking…' : talkState === 'speaking' ? '🗣 speaking (talk to interrupt)'
+      : listening ? listenPose.label : '';
     if (convState.textContent !== label) { convState.textContent = label; convState.hidden = !label; }
 
     const blink = alive ? blinkAmount(now) : 0;
@@ -759,7 +878,8 @@ function frame(t) {
     const lookAhead = predictor ? (predictor.meta.future ?? 0) * (1000 / 30) : 0;
     latency.record('look-ahead', lookAhead);
     latency.record('wait', drawStart - consumed.readyAt);
-    latency.record('end-to-end', drawEnd - consumed.soundAt + lookAhead);
+    latency.record('voice → jaw', drawEnd - consumed.soundAt);                 // opening follows loudness at once
+    latency.record('voice → shape', drawEnd - consumed.soundAt + lookAhead);  // the model's mouth shape waits for look-ahead
   }
   if ($('showLatency').checked && drawEnd - (frame.latAt ?? 0) > 250) { frame.latAt = drawEnd; showLatency(); }
 

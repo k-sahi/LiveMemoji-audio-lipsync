@@ -1,0 +1,5 @@
+torch>=2.2
+numpy>=1.24
+# optional, only for benchmark_onnx.py
+onnx>=1.15
+onnxruntime>=1.17
